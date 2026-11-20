@@ -281,6 +281,14 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
     while t < duration:
         windows.append((t, min(duration, t + WINDOW_SEC)))
         t += WINDOW_SEC - OVERLAP_SEC
+    # Keep the number of picks per AI response modest. Dense requests get more
+    # transcript windows, up to the number of clips the footage can fit.
+    max_clips = min(max_clips, max(1, int(duration / min_len)))
+    if max_clips > 8 * len(windows):
+        sections = (max_clips + 5) // 6
+        step = duration / sections
+        windows = [(i * step, min(duration, (i + 1) * step + min(OVERLAP_SEC, step / 8)))
+                   for i in range(sections)]
     per_window = max(2, min(8, int(np.ceil(max_clips * 1.5 / len(windows))) + 1))
     extra = _game_rules(game)
     for a, b in windows:

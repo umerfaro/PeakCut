@@ -7,7 +7,7 @@ Runs against the code directly, with its own empty data folder."""
 import os, shutil, subprocess, sys, tempfile
 os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-facecam-")
 sys.path.insert(0, ".")
-from studio import facecam, render
+from studio import facecam, render, stacked
 fails = []
 def check(n, got, want=True):
     ok = want(got) if callable(want) else got == want
@@ -102,6 +102,29 @@ try:
     with patch.object(_ai, "see", return_value=("I am a text model.", 0, 0)):
         check("an answer that is neither is not believed", brain.look_for_facecam(b"jpeg")["looked"], False)
 
+    # Clip Studio framing requires a persistent face in the same part of the source.
+    face = {"x": .08, "y": .5, "width": .07, "height": .12, "confidence": .95}
+    check("one passing face leaves the entire source visible",
+          stacked.face_crop([{"faces": [face]}] + [{"faces": []}] * 7), None)
+    crop = stacked.face_crop([{"faces": [face]}] * 8)
+    check("the top camera has headroom", crop[1] < face["y"] and crop[3] > face["height"])
+    from pathlib import Path
+    from PIL import Image, ImageDraw
+
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory() as samples:
+        for i in range(4):
+            frame = Image.new("RGB", (320, 180), (10 + i, 20, 10))
+            ImageDraw.Draw(frame).rectangle((0, 76, 63, 115), fill=(194, 132, 122))
+            frame.save(Path(samples) / f"frame{i}.jpg", quality=98)
+        box = stacked.webcam_bounds(Path(samples), (.06, .47, .08, .13))
+    check("the full camera surrounds the detected face and reaches the source edge",
+          all(abs(v * s - expected) <= 2 for v, s, expected in zip(box, (320, 180, 320, 180), (0, 76, 64, 40))))
+    _, panel_h, _, captions = render.geometry(320, 180, "stacked", box)
+    graph = render._filter("stacked", panel_h, box)
+    check("the full webcam is scaled once without blurry side panels", "boxblur" not in graph and "vstack" in graph)
+    check("the camera panel has a fixed height", panel_h, render.FACE_H)
+    check("spoken captions follow the camera divider", captions - panel_h, 56)
     # ---- the layout: the game fills the screen and the webcam sits in the corner
     f = render._filter("gameplay", 1920, [0, 0, 300, 170])
     check("the game fills the screen", "scale=1080:1920" in f and "crop=1080:1920" in f, True)

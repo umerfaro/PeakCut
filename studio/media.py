@@ -1,8 +1,11 @@
 """Getting video in: link download, probing, audio extraction, loudness."""
 import contextlib
 import json
+import math
 import re
 import subprocess
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -19,6 +22,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # minutes, with a clear message, instead of each one waiting to fail. Then the next link simply tries again.
 YT_PAUSE = 600
 _yt_refused_until = 0.0
+_yt_section_slot = threading.Lock()
 YT_BLOCKED = ("YouTube isn't letting PeakCut download videos right now. Upload the video file instead, or use a "
               "Twitch or Kick link. YouTube links will be tried again in a few minutes.")
 _BOT_CHECK = re.compile(r"not a bot|confirm you.?re not|sign in to confirm(?! your age)", re.I)
@@ -264,6 +268,21 @@ def download(url: str, job_dir: Path, height=720) -> Path:
 
 
 def download_section(url: str, out_dir: Path, stem: str, start: float, end: float, height=720, exact=False) -> Path:
+    """Retry temporary transport failures with fresh media URLs and a clean work folder."""
+    for attempt in range(3):
+        try:
+            return _download_section(url, out_dir, stem, start, end, height, exact)
+        except Exception as error:
+            transient = re.search(r"ffmpeg exited with code|timed out|connection reset|HTTP Error 50[234]", str(error), re.I)
+            if isinstance(error, YouTubeBlocked) or not transient:
+                raise
+            if attempt == 2:
+                raise RuntimeError("The video excerpt download failed after three attempts. "
+                                   "Try making this clip again when the source is available.") from error
+            time.sleep(2 * (attempt + 1))
+
+
+def _download_section(url: str, out_dir: Path, stem: str, start: float, end: float, height=720, exact=False) -> Path:
     """Just one stretch of the video. The cut lands on a keyframe, so find_offset() pins the true start; with
     exact=True the cut is made at exactly `start` instead (slower), for when there is nothing to match against."""
     from yt_dlp.utils import download_range_func
@@ -272,9 +291,81 @@ def download_section(url: str, out_dir: Path, stem: str, start: float, end: floa
             "download_ranges": download_range_func(None, [(max(0.0, start), end)])}
     if exact:
         opts["force_keyframes_at_cuts"] = True
-    with _youtube_guard(url), _ydl(opts) as ydl:
-        ydl.download([url])
-    return _biggest(out_dir, stem)
+    if not (0 <= start < end and math.isfinite(end)):
+        raise ValueError("The selected video range is invalid.")
+    youtube = is_youtube(url)
+    # A large batch or bulk remake can start many render workers at once.
+    # Check the cooldown inside the slot so queued requests respect a refusal.
+    slot = _yt_section_slot if youtube else contextlib.nullcontext()
+    with slot, _youtube_guard(url), tempfile.TemporaryDirectory(prefix="piece-", dir=out_dir) as temp:
+        work = Path(temp)
+        opts["outtmpl"] = str(work / (stem + ".%(ext)s"))
+        with _ydl(opts) as ydl:
+            if youtube:
+                info = ydl.extract_info(url, download=False)
+                if info.get("live_status") == "post_live":
+                    piece = _post_live_section(ydl, info, work, stem, start, end)
+                else:
+                    ydl.process_ie_result(info, download=True)
+                    piece = _biggest(work, stem)
+            else:
+                ydl.download([url])
+                piece = _biggest(work, stem)
+        if probe(piece)["duration"] < end - start - 1:
+            raise RuntimeError("The download returned only part of this range. Try making the clip again later.")
+        return piece.replace(out_dir / piece.name)
+
+
+def _post_live_section(ydl, info, work, stem, start, end):
+    """Use YouTube's two-second replay fragments while the seekable archive is publishing."""
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import parse_qs, urlparse
+
+    formats = info.get("requested_formats") or []
+    unavailable = "YouTube is still publishing this part of the replay. Try making the clip again later."
+    if len(formats) != 2 or any(f.get("protocol") != "http_dash_segments" or f.get("ext") not in ("mp4", "m4a") for f in formats):
+        raise RuntimeError(unavailable)
+    first = max(0, math.floor(start / 2) - 2)
+    last = math.ceil(end / 2) + 2
+    if last - first > 105:
+        raise RuntimeError(unavailable)
+
+    def download(fragment, index):
+        url = fragment["url"]
+        u = urlparse(url)
+        if (u.scheme != "https" or not (u.hostname or "").endswith(".googlevideo.com")
+                or parse_qs(u.query).get("sq") != [str(index)]):
+            raise RuntimeError(unavailable)
+        with ydl.urlopen(url) as response:
+            data = response.read(16 * 1024 * 1024 + 1)
+        if not data or len(data) > 16 * 1024 * 1024:
+            raise RuntimeError(unavailable)
+        return data
+
+    inputs = []
+    for track, fmt in enumerate(formats):
+        fragments = fmt.get("fragments") or []
+        stop = min(last, len(fragments))
+        if first >= stop:
+            raise RuntimeError(unavailable)
+        path = work / f"track-{track}.mp4"
+        with path.open("wb") as out, ThreadPoolExecutor(max_workers=4) as pool:
+            # Keep only a small batch of fragments in memory.
+            for base in range(first, stop, 8):
+                indices = range(base, min(base + 8, stop))
+                for data in pool.map(download, (fragments[i] for i in indices), indices):
+                    out.write(data)
+        meta = json.loads(run(["ffprobe", "-v", "error", "-of", "json", "-show_format", str(path)]))["format"]
+        origin, latest = float(meta["start_time"]), float(meta["duration"])
+        if origin > start + .05 or latest < end - .25:
+            raise RuntimeError(unavailable)
+        inputs += ["-ss", f"{max(0, start - origin):.3f}", "-i", str(path)]
+    video = next(i for i, fmt in enumerate(formats) if fmt.get("vcodec") != "none")
+    output = work / f"{stem}.mp4"
+    run(["ffmpeg", "-y", "-v", "error", *inputs, "-map", f"{video}:v:0", "-map", f"{1-video}:a:0",
+         "-t", str(end - start), "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+         "-c:a", "aac", "-movflags", "+faststart", str(output)], timeout=300)
+    return output
 
 
 def find_offset(full: np.ndarray, part: np.ndarray, expected: float, search=20.0) -> float:

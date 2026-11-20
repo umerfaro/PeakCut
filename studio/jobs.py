@@ -111,7 +111,7 @@ DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "la
             "range_start": None, "range_end": None, "captions": True}
 
 
-LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
+LIMITS = {"min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
 
 
 def clean_options(options) -> dict:
@@ -125,7 +125,9 @@ def clean_options(options) -> dict:
             continue
         if k not in DEFAULTS or v in ("", None):
             continue
-        if k in LIMITS:
+        if k == "max_clips":
+            v = config.clip_count(v)
+        elif k in LIMITS:
             lo, hi = LIMITS[k]
             v = max(lo, min(hi, int(float(v))))
         elif k == "style":
@@ -154,6 +156,12 @@ def public(job) -> dict:
     out = {k: v for k, v in job.items() if k not in HIDDEN}
     out["source"] = {k: v for k, v in job["source"].items() if k != "path"}
     out["clips"] = [{k: v for k, v in c.items() if k not in ("src", "fixed_words", "fixed_for")} for c in job["clips"]]
+    for clip in out["clips"]:
+        bounds = _legacy_bounds(job, clip)
+        if bounds:
+            clip.update(start=bounds[0], end=bounds[1])
+            clip.pop("src_offset", None)
+            clip.pop("src_end", None)
     ai = job.get("ai") or {}
     out["ai"] = {"tokens": ai.get("tokens", 0), "note": ai.get("note", ""), "used": bool(ai.get("model"))}   # never the model, never raw errors
     if job.get("status") == "queued":
@@ -342,16 +350,31 @@ def delete(jid):
     return bool(job)
 
 
+def _legacy_bounds(job, clip):
+    """Older builds overwrote the end time when a replay piece was too short."""
+    if (job.get("kind") != "video" or job.get("source", {}).get("type") != "url"
+            or clip.get("status") != "error" or "src_offset" not in clip
+            or clip["end"] - clip["start"] >= 3):
+        return None
+    start = clip["start"]
+    opts = job["options"]
+    seconds = max(opts.get("min_len", 15), min(30, opts.get("max_len", 60)))
+    return start, min(start + seconds, job.get("duration") or start + seconds)
+
+
 def request_render(jid, cid, changes: dict):
     job = _jobs[jid]
     clip = next(c for c in job["clips"] if c["id"] == cid)
     new = dict(clip)
+    repair = _legacy_bounds(job, clip)
+    if repair:
+        new.update(start=repair[0], end=repair[1])
     if "captions" in changes:
         new.update(clean_options({"captions": changes["captions"]}))
     for k in ("start", "end"):
-        if k in changes:
+        if k in changes and not (repair and float(changes[k]) == clip[k]):
             new[k] = round(float(changes[k]), 2)
-    if "src_offset" in clip:  # live clip: can only move inside the saved piece of stream
+    if "src_offset" in clip and not repair:  # keep edits inside the saved piece of stream
         new["start"] = max(new["start"], clip["src_offset"])
         new["end"] = min(new["end"], clip["src_end"])
     if not (math.isfinite(new["start"]) and math.isfinite(new["end"])) or new["start"] < 0:
@@ -365,6 +388,10 @@ def request_render(jid, cid, changes: dict):
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:
         new["layout"] = DEFAULTS["layout"]
+    if repair:
+        for key in ("src", "src_offset", "src_end"):
+            new.pop(key, None)
+            clip.pop(key, None)
     clip.update(new, status="queued")
     save(job)
     _q.put(("clip", jid, cid))
@@ -382,6 +409,8 @@ def render_one(job, clip, words):
         if not clip.get("src"):
             clip["end"] = min(clip["end"], job["duration"])
         local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
+        if local["start"]<0 or local["end"]<=local["start"]:
+            raise RuntimeError("The saved footage does not cover this clip. Try downloading this part again.")
         near = _caption_words(job, clip, words, off) if clip.get("captions", True) else []
         out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"])
         clip.update(out, status="done", version=clip.get("version", 0) + 1, error=None)
@@ -483,10 +512,17 @@ def _piece_again(job, clip):
         meta = media.probe(piece)
     except Exception as e:  # noqa: BLE001
         raise RuntimeError(f"Could not fetch this part of the video: {safe.friendly(e, 250)}") from e
-    clip.update(src=str(piece), src_offset=round(want, 2), src_end=round(want + meta["duration"], 2))
-    clip["end"] = min(clip["end"], clip["src_end"])
+    _attach_piece(clip,piece,want,meta["duration"])
     job.setdefault("width", meta["width"])
     job.setdefault("height", meta["height"])
+
+
+def _attach_piece(clip, piece, offset, duration):
+    offset, end = round(offset, 2), round(offset + duration, 2)
+    start, stop = max(clip["start"], offset), min(clip["end"], end)
+    if stop-start < max(3,clip["end"]-clip["start"]-.75):
+        raise RuntimeError("The download returned footage outside this clip's time range. Try making the clip again.")
+    clip.update(src=str(piece),src_offset=offset,src_end=end,start=start,end=stop)
 
 
 def _fetch_piece(job, clip, full_audio):
@@ -503,8 +539,7 @@ def _fetch_piece(job, clip, full_audio):
         wav.unlink(missing_ok=True)
         meta = media.probe(piece)
         off = media.find_offset(full_audio, part, want)
-        clip.update(src=str(piece), src_offset=round(off, 2), src_end=round(off + meta["duration"], 2))
-        clip["start"], clip["end"] = max(clip["start"], clip["src_offset"]), min(clip["end"], clip["src_end"])
+        _attach_piece(clip,piece,off,meta["duration"])
         job.setdefault("width", meta["width"])
         job.setdefault("height", meta["height"])
     except Exception as e:  # noqa: BLE001
@@ -733,7 +768,8 @@ def _run_job(job):
             job["done_blocks"] = bi + 1
             save(job)
             continue
-        quota = max(1, math.ceil(left / (len(blocks) - bi)))
+        remaining_blocks = len(blocks) - bi
+        quota = (left + remaining_blocks - 1) // remaining_blocks
         s0 = int((a - lo) / 16000)
         found, ai = brain.find_clips(bw, db[s0: s0 + int((b - a) / 16000) + 1], (b - a) / 16000, job["title"],
                                      job["uploader"], quota, int(o["min_len"]), int(o["max_len"]), notes.append, game=game)
@@ -753,6 +789,7 @@ def _run_job(job):
                 else:
                     keep.append(c)
             found = keep
+        words_now = list(words) if found else []
         for c in found:
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"],
@@ -764,7 +801,7 @@ def _run_job(job):
             if face:
                 c["facecam"] = face
             job["clips"].append(c)
-            futures.append((renders.submit(ctx.bind(make), c, list(words)), c))
+            futures.append((renders.submit(ctx.bind(make), c, words_now), c))
         job["ai"] = {"model": model, "tokens": tokens, "note": "", "log": notes[-5:]}
         job["done_blocks"] = bi + 1       # a restart from here on carries on with the next part
         save(job)

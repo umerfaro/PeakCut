@@ -23,6 +23,18 @@ _load_dotenv()
 env = os.environ.get
 
 
+def clip_count(value):
+    """A positive requested count; selection is limited by the available footage."""
+    message = "Enter a whole number of clips, at least 1."
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(message) from None
+    if count < 1 or isinstance(value, bool) or (isinstance(value, float) and value != count):
+        raise ValueError(message)
+    return count
+
+
 _kept: dict = {}
 
 

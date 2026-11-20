@@ -390,6 +390,9 @@ img.av{object-fit:cover}
 .lay-prev .ph::before{content:"";position:absolute;inset:0;background:linear-gradient(160deg,#B4643A,#5E3A2A);filter:blur(3px);opacity:.75}
 .lay-prev .ph i{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:16px;background:linear-gradient(135deg,#FF8B33,#FFB27A)}
 .lay-prev.zoom .ph i{left:-6px;right:-6px;height:24px}
+.lay-prev.stacked .ph{outline:1px solid #FFD400}
+.lay-prev.stacked .ph::before{inset:0 0 70%;background:#AE785A;filter:none;opacity:1}
+.lay-prev.stacked .ph i{top:30%;height:70%;transform:none;border-top:1px solid #FFD400}
 .lay-prev.crop .ph i{left:0;right:0;top:0;height:100%;transform:none}
 .seg{display:flex;gap:4px;background:#fff;border-radius:10px;padding:4px}
 .composer.compact .seg{background:var(--muted)}
@@ -1372,7 +1375,7 @@ function drawAdd(variant) {
     </div>
     <div class="composer-opts" inert><div class="og">
       <div class="ob wide"><div class="ot">Clips</div><div class="nsteps">
-        ${stepper("o_max", "How many", c?.max_clips ?? 6, 1, 20, 1, "")}
+        ${stepper("o_max", "How many", c?.max_clips ?? 6, 1, null, 1, "")}
         ${stepper("o_min", "Shortest", c?.min_len ?? 15, 5, 120, 5, "s")}
         ${stepper("o_maxlen", "Longest", c?.max_len ?? 60, 10, 180, 5, "s")}
       </div></div>
@@ -1389,7 +1392,7 @@ function drawAdd(variant) {
     </div></div></form>`;
   drawAtt();
 }
-const LAYOUT_SHORT = {blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen", gameplay:"Gameplay + facecam"};
+const LAYOUT_SHORT = {blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen", gameplay:"Gameplay + facecam", stacked:"Facecam on top"};
 const CAP_LOOK = {bounce:{font:"'Archivo Black'", hl:"#FFFF00", up:true}, hype:{font:"Anton", hl:"#FF3C3C", up:true}, clean:{font:"Poppins", hl:"#6BD7FF", up:false, w:800}};
 function capPrev(k) {
   const s = CAP_LOOK[k] || {font:"inherit", hl:"#FF8B33", up:true};
@@ -1406,7 +1409,7 @@ function picker(id, aria, items, val) {
 function stepper(id, label, val, min, max, step, unit) {
   return `<div class="nstep"><span>${esc(label)}</span><div class="ctl">
     <button type="button" data-step="${id}" data-d="-1" aria-label="Less">${ic("minus")}</button>
-    <input id="${id}" type="number" min="${min}" max="${max}" step="${step}" value="${esc(val)}" aria-label="${esc(label)}">${unit ? `<i>${unit}</i>` : ""}
+    <input id="${id}" type="number" min="${min}"${max === null ? "" : ` max="${max}"`} step="${step}" value="${esc(val)}" aria-label="${esc(label)}">${unit ? `<i>${unit}</i>` : ""}
     <button type="button" data-step="${id}" data-d="1" aria-label="More">${ic("plus")}</button></div></div>`;
 }
 function choice(id, items, val, disabled = false) {
@@ -1431,7 +1434,8 @@ document.addEventListener("click", e => {
     sg.parentElement.querySelectorAll("[data-seg]").forEach(b => b.setAttribute("aria-pressed", String(b === sg))); return; }
   const st = e.target.closest("[data-step]");
   if (st) { const i = $("#" + st.dataset.step), s = Number(i.step) || 1, d = Number(st.dataset.d);
-    const v = Math.min(Number(i.max), Math.max(Number(i.min), (Number(i.value) || 0) + d * s)); i.value = v; }
+    const v = Math.max(Number(i.min), (Number(i.value) || 0) + d * s);
+    i.value = i.max === "" ? v : Math.min(Number(i.max), v); }
 });
 document.addEventListener("keydown", e => {
   const p = e.target.closest?.(".pick"); if (!p) return;
@@ -1644,9 +1648,14 @@ async function makeClips() {
     $("#url")?.focus();
     return;
   }
+  const who = targetCreator(), opts = jobOptions();
+  if ($("#o_max")?.validity.badInput || (opts.max_clips !== null && (!Number.isSafeInteger(opts.max_clips) || opts.max_clips < 1))) {
+    toast("Enter a whole number of clips, at least 1.", "bad");
+    $("#o_max")?.focus();
+    return;
+  }
   A.busy = true; drawAtt();
   let started = 0, failed = 0;
-  const who = targetCreator(), opts = jobOptions();
   for (const l of A.links.filter(x => x.state === "ok")) {
     l.sending = true; drawAtt();
     try { await send("/api/jobs", {url: l.url, options: opts, creator: who}); l.state = "done"; started++; }
@@ -1673,8 +1682,8 @@ function scoreCls(s) { return s >= 80 ? "s-hi" : s >= 60 ? "s-mid" : ""; }
 function postPills(c) {
   return Object.values(c.posts || {}).filter(p => p.status !== "cancelled").map(p => {
     const cls = p.status === "posted" ? "ok" : p.status === "failed" ? "bad" : "warn";
-    const txt = `${esc(p.account_name)} · ${p.status === "scheduled" ? clock(p.due_at) : p.status}`;
-    return p.url ? `<a class="pill ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener">${txt}</a>` : `<span class="pill ${cls}" title="${esc(p.error || "")}">${txt}</span>`;
+    const txt = `${esc(p.account_name)} · ${p.status === "scheduled" ? (p.due_at <= Date.now() / 1000 ? "Waiting to upload" : clock(p.due_at)) : p.status}`;
+    return p.url ? `<a class="pill ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener">${txt}</a>` : `<span class="pill ${cls}" title="${esc(p.error || "")}">${txt}</span>${p.error ? `<span class="sub">${esc(p.error)}</span>` : ""}`;
   }).join("");
 }
 function clipHtml(j, c) {
@@ -1863,7 +1872,7 @@ function drawCreatorForm() {
         <label class="f">Game<input data-k="game" value="${esc(c.game || "")}" placeholder="Read from the title"><small class="sub" style="font-weight:400">Left empty, the game is read from the stream's title. Set it for a streamer whose title says nothing: GTA 6, Fortnite, Elden Ring.</small></label>
         <label class="f">Shortest clip (seconds)<input data-k="min_len" type="number" value="${c.min_len}"></label>
         <label class="f">Longest clip (seconds)<input data-k="max_len" type="number" value="${c.max_len}"></label>
-        <label class="f">Clips per video<input data-k="max_clips" type="number" value="${c.max_clips}"></label>
+        <label class="f">Clips per video<input data-k="max_clips" type="number" min="1" step="1" value="${c.max_clips}"></label>
         <label class="f">Minutes of live stream to keep<input data-k="buffer_min" type="number" value="${c.buffer_min}"></label></div></div>
     <div class="card"><h2>Posting</h2><p class="help">${A.length ? "Choose the accounts this creator's clips go to. One account can be shared by several creators." : "No accounts are connected yet. Connect one in Settings, then come back."}</p>
       ${A.length ? `<div class="row" style="margin-bottom:16px">${A.map(a => `<label class="ck"><input type="checkbox" data-acc value="${esc(a.id)}" ${c.accounts.includes(a.id) ? "checked" : ""}>${esc(a.label)} · ${esc(a.name)}</label>`).join("")}</div>` : `<button class="btn" data-act="go" data-v="settings" style="margin-bottom:16px">${ic("cog")}Open Settings</button>`}
@@ -2142,7 +2151,7 @@ function drawClipDlg(full) {
         <div class="job-head" style="margin:0"><div><span class="badge ${scoreCls(c.score)}" style="position:static">${c.judges ? "Words " + c.judges.words + (c.judges.reaction ? " · Reaction " + c.judges.reaction : "") : c.score ? "Score " + c.score : "Clipped by hand"}</span>
           <p class="sub" style="margin-top:8px">${esc(c.reason || "")}</p></div><button class="btn icon ghost" data-act="closedlg" aria-label="Close">${ic("x")}</button></div>
         <h3>On the video</h3>
-        <label class="f">Big text<input data-f="hook" value="${esc(c.hook)}"></label>
+        <label class="f" data-hook-field>Big text<input data-f="hook" value="${esc(c.hook)}"></label>
         <label class="sw"><input type="checkbox" data-f="captions" data-caption-toggle ${c.captions === false ? "" : "checked"}>Generate captions</label>
         <div class="two"><label class="f">Caption style<select data-f="style" data-caption-style ${c.captions === false ? "disabled" : ""}>${opts(S.status.styles, c.style)}</select></label>
           <label class="f">Layout<select data-f="layout">${opts(S.status.layouts, c.layout)}</select></label></div>
@@ -2467,9 +2476,9 @@ document.addEventListener("click", async e => {
     if (a === "postnow" || a === "postqueue") {
       const accs = $$("#clipdlg [data-pacc]:checked").map(i => i.value);
       if (!accs.length) return toast("Tick at least one account first.", "bad");
-      if (a === "postnow" && !await ask("Post now?", `This clip goes to ${accs.length} account${accs.length > 1 ? "s" : ""} straight away.`, "Post now")) return;
+      if (a === "postnow" && !await ask("Post now?", `Request an upload to ${accs.length} account${accs.length > 1 ? "s" : ""} now. The platform may return a limit or an error.`, "Post now")) return;
       await send("/api/posts", {job:D.jid, clip:D.cid, accounts:accs, now:a === "postnow"});
-      toast(a === "postnow" ? "Posting now" : "Added to the queue", "ok"); return tick();
+      toast(a === "postnow" ? "Immediate upload requested" : "Added to the queue", "ok"); return tick();
     }
   } catch (err) { b.disabled = false; toast(err.message, "bad"); }
 });

@@ -5,10 +5,13 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from . import config, roman
+from . import config, roman, stacked
 from .media import NO_WINDOW, run
 
 W, H = config.OUT_W, config.OUT_H
+FACE_H = round(H * .40 / 2) * 2
+FRAME_COLOR = "0xFFD400"
+FRAME_PX = 6
 
 # ASS colours are &HBBGGRR. `size` is the ASS font size (line height); _Font turns it into real pixels.
 STYLES = {
@@ -79,7 +82,8 @@ def install_fonts():
 
 
 LAYOUTS = {"blur": "Full frame + blurred fill", "zoom": "Zoomed in + blurred fill", "crop": "Fill the screen (centre crop)",
-           "gameplay": "Gameplay fills the screen, facecam in the corner"}
+           "gameplay": "Gameplay fills the screen, facecam in the corner",
+           "stacked": "Facecam on top, gameplay below"}
 
 
 def _ts(t):
@@ -109,10 +113,12 @@ def _groups(words, per):
     return out
 
 
-def geometry(src_w, src_h, layout):
+def geometry(src_w, src_h, layout, face=None):
     """Where the video sits in the 1080x1920 frame, and where hook and captions go."""
     if src_h >= src_w and layout != "crop":
         layout = "crop"  # already vertical or square: nothing to gain from a blurred fill
+    if layout == "stacked":
+        return layout, FACE_H, FACE_H, FACE_H + 56
     if layout == "blur":
         fg_h = min(H, int(round(W * src_h / src_w / 2)) * 2)
     elif layout == "zoom":
@@ -125,7 +131,7 @@ def geometry(src_w, src_h, layout):
     return layout, fg_h, max(230, top - 190), min(1640, top + fg_h + 180)
 
 
-def _hook_events(hook, dur, y):
+def _hook_events(hook, dur, y, card=True):
     """The heading: dark text in a white rounded box that fits it, on one line or two balanced ones."""
     f, size = _Font.get(HOOK["font"]), HOOK["size"]
     words = hook.split()
@@ -150,13 +156,19 @@ def _hook_events(hook, dur, y):
            f"l {n(x0)} {n(y0 + r)} b {n(x0)} {n(y0)} {n(x0)} {n(y0)} {n(x0 + r)} {n(y0)}")
     span = f"{_ts(0)},{_ts(dur)}"
     ev = [f"Dialogue: 3,{span},Hook,,0,0,0,,{{\\an7\\pos(0,0)\\fad(160,0)\\c&H{HOOK['box']}&\\p1}}{box}{{\\p0}}"]
+    if not card:
+        ev = []
     for i, line in enumerate(lines):
         cy = y - line_h * (len(lines) - 1) / 2 + i * line_h - f.cap_shift(size)
-        ev.append(f"Dialogue: 4,{span},Hook,,0,0,0,,{{\\an5\\pos({W // 2},{cy:.0f})\\fad(160,0)\\fs{size}}}{line}")
+        treatment = "" if card else "\\c&HFFFFFF&\\bord6\\shad2"
+        if not card and i == 0:
+            first, _, rest = line.partition(" ")
+            line = "{\\c&H00D4FF&}" + first + "{\\c&HFFFFFF&}" + (" " + rest if rest else "")
+        ev.append(f"Dialogue: 4,{span},Hook,,0,0,0,,{{{treatment}\\an5\\pos({W // 2},{cy:.0f})\\fad(160,0)\\fs{size}}}{line}")
     return ev
 
 
-def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y) -> str:
+def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, hook_card=True) -> str:
     st = STYLES.get(style_name, STYLES["bounce"])
     words = [dict(w, s=w["s"] - CAPTION_LEAD, e=w["e"] - CAPTION_LEAD) for w in words]
     strong = {_key(h) for h in highlight if _key(h)}
@@ -176,7 +188,7 @@ Style: Hook,{HOOK['font']},{HOOK['size']},&H00{HOOK['ink']},&H00{HOOK['ink']},&H
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     dur = end - start
-    ev = _hook_events(_clean(hook), dur, hook_y)
+    ev = _hook_events(_clean(hook), dur, hook_y, card=hook_card)
     f = _Font.get(st["font"])
     inside = [dict(w, w=_clean(w["w"])) for w in words if w["s"] >= start - 0.05 and w["s"] < end]
     inside = sorted((w for w in inside if w["w"]), key=lambda w: w["s"])
@@ -233,6 +245,16 @@ PIP_MARGIN = 26
 
 
 def _filter(layout, fg_h, facecam=None):
+    if layout == "stacked" and facecam:
+        x, y, w, h = facecam
+        game_h = H - fg_h
+        return (f"[0:v]fps={config.OUT_FPS},split=2[cam][game];"
+                f"[cam]crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},"
+                f"scale={W}:{fg_h}:force_original_aspect_ratio=increase:force_divisible_by=2,"
+                f"crop={W}:{fg_h},setsar=1[top];"
+                f"[game]scale={W}:{game_h}:force_original_aspect_ratio=increase,"
+                f"crop={W}:{game_h},setsar=1[bottom];[top][bottom]vstack=inputs=2,"
+                f"drawbox=x=0:y={fg_h - FRAME_PX // 2}:w=iw:h={FRAME_PX}:color={FRAME_COLOR}:t=fill[v0];")
     if layout == "gameplay" and facecam:
         # The game fills the screen, and the webcam sits in the top corner of it, so a viewer sees
         # the play and the face at the same time.
@@ -270,10 +292,18 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     start, end = clip["start"], clip["end"]
     layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, clip.get("layout", "blur"))
     face = clip.get("facecam")
+    requested = clip.get("layout", "blur")
+    if layout == "stacked":
+        face = stacked.detect(src, start, end)
+        layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, "stacked" if face else "blur", face)
     if layout == "gameplay" and not (face and len(face) == 4):
         layout = "crop"     # no webcam found: the game fills the screen, which is still the right shape
     hook_y = _hook_y(layout, hook_y, face)
-    ass = build_ass(words if clip.get("captions", True) else [], start, end, clip.get("hook", ""), clip.get("style", "bounce"),
+    hook = clip.get("hook", "")
+    if layout == "stacked" and _clean(hook):
+        # Leave room for the two-line hook card and the largest animated caption.
+        cap_y = FACE_H + 220
+    ass = build_ass(words if clip.get("captions", True) else [], start, end, hook, clip.get("style", "bounce"),
                     clip.get("highlight_words", []), hook_y, cap_y)
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
     # open files whose full path is longer than 260 characters on Windows, which a data folder deep inside other
@@ -281,18 +311,24 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     # break the filter syntax).
     work = Path(tempfile.mkdtemp(prefix="pk"))
     try:
-        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face=face)
+        graph = _filter(layout, fg_h, face) + "[v0]"
+        if requested == "stacked":
+            graph += f"drawbox=x=0:y=0:w=iw:h=ih:color={FRAME_COLOR}:t={FRAME_PX},"
+        result = _render_in(work, src, out_dir, name, start, end, layout, graph, ass)
+        if requested == "stacked":
+            result["layout"] = requested  # Keep the user's choice when this excerpt has no camera.
+        return result
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, face=None) -> dict:
+def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, graph, ass: str) -> dict:
     global _qsv_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     (work / "f").mkdir()
     for f in config.FONTS_DIR.glob("*.ttf"):
         shutil.copyfile(f, work / "f" / f.name)
-    fc = _filter(layout, fg_h, face) + f"[v0]ass={name}.ass:fontsdir=f[v]"
+    fc = graph + f"ass={name}.ass:fontsdir=f[v]"
     base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
             "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", "-pix_fmt"]
