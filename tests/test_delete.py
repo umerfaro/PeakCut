@@ -33,6 +33,8 @@ with ctx.as_user(a.id):
     z = account.zip_clips([(j1["id"], "clip02"), (j1["id"], "clip03"), (j2["id"], "clip01"), ("nope", "x")])
     names = zipfile.ZipFile(z).namelist()
     check("several clips download as one zip with distinct names", len(names) == 3 and len(set(names)) == 3, str(names))
+    check("a clip is saved under its title", account.clip_title_name({"title": "Kai's Epic Shootout – Got Him!", "hook": "X"}, "clip01") == "Kais Epic Shootout  Got Him", account.clip_title_name({"title": "Kai's Epic Shootout – Got Him!"}))
+    check("...or its hook, or its id when it has neither", (account.clip_title_name({"hook": "WOW"}, "clip02"), account.clip_title_name({}, "clip03"), account.clip_title_name({"title": "???"}, "clip04")) == ("WOW", "clip03", "clip04"))
     r = account.delete_many([j1["id"], j3["id"]], [(j2["id"], "clip01"), (j1["id"], "clip02")])
     check("bulk delete removes videos and clips, leaves work in progress alone", r == {"videos": 1, "clips": 1, "skipped": 1}, str(r))
     check("the deleted video's folder is gone", not Path(j1["dir"]).exists())

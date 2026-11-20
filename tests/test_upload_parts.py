@@ -75,5 +75,25 @@ check("an oversized request to the pieces address is cut off", big.status_code =
 c = a.post("/api/upload/start", json={"name": "y.mp4", "size": 1000}).json()
 check("an upload can be cancelled", a.delete(f"/api/upload/{c['id']}").status_code == 200 and a.put(f"/api/upload/{c['id']}/0", content=b"x" * 1000, headers=H).status_code == 404)
 
+# ---- an upload cut short by closing the tab never says it stopped; it must not block new uploads for hours
+if data_dir:
+    up_root = Path(data_dir) / "tmp" / "uploads"
+    mine_a = a.post("/api/upload/start", json={"name": "a-left.mp4", "size": 1000}).json()["id"]
+    started = [b.post("/api/upload/start", json={"name": f"b{i}.mp4", "size": 1000}) for i in range(st["max_batch"])]
+    check("several uploads can run at once", all(r.status_code == 200 for r in started), str([r.status_code for r in started]))
+    full = b.post("/api/upload/start", json={"name": "one-more.mp4", "size": 1000})
+    check("past the limit a new upload is refused", full.status_code == 429, str(full.status_code))
+    left = time.time() - 20 * 60                                   # as if the tabs were closed 20 minutes ago
+    for d in up_root.glob("up-*"):
+        for f in [d, *d.iterdir()]:
+            os.utime(f, (left, left))
+    again = b.post("/api/upload/start", json={"name": "after.mp4", "size": 1000})
+    check("uploads left behind for a while stop counting", again.status_code == 200, again.text[:120])
+    check("they are cleared away", sum(1 for r in started if (up_root / f"up-{r.json()['id']}").exists()) == 0)
+    check("someone else's upload is not cleared by me", (up_root / f"up-{mine_a}").exists())
+    busy = b.post("/api/upload/start", json={"name": "busy.mp4", "size": 1000}).json()["id"]
+    a.post("/api/upload/start", json={"name": "a-new.mp4", "size": 1000})
+    check("an upload that is still moving is kept", (up_root / f"up-{busy}").exists())
+
 print("\n%d failed" % len(fails) if fails else "\nALL PASSED")
 sys.exit(1 if fails else 0)

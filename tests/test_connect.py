@@ -50,6 +50,18 @@ r = a.put("/api/apps", json={"platform": "tiktok", "client_id": "", "client_secr
 check("a new secret alone keeps the saved id", accounts.app_keys("tiktok"), ("awtiktokkey123", "tiktok-secret-value2"))
 check("everyone can connect now", b.get("/api/status").json()["connect"], {"youtube": True, "instagram": True, "tiktok": True})
 
+# ---- YouTube cookies, for servers YouTube refuses
+from studio import media
+COOK = ".youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tsecret-cookie-value\n"
+check("a normal user cannot save YouTube cookies", b.put("/api/youtube-cookies", json={"text": COOK}, headers=ORIGIN).status_code, 404)
+check("something that is not a cookies file is refused", a.put("/api/youtube-cookies", json={"text": "hello"}, headers=ORIGIN).status_code, 400)
+r = a.put("/api/youtube-cookies", json={"text": COOK}, headers=ORIGIN)
+check("cookies saved", (r.status_code, r.json()["saved"]), (200, True))
+check("the cookies are never sent back", "secret-cookie-value" in a.get("/api/youtube-cookies").text, False)
+check("downloads use them", media.cookie_opts(), {"cookiefile": str(config.YT_COOKIES)})
+a.put("/api/youtube-cookies", json={"remove": True}, headers=ORIGIN)
+check("...until they are removed", (config.YT_COOKIES.exists(), media.cookie_opts()), (False, {}))
+
 # ---- the platforms, as stand-ins
 class R:
     def __init__(self, code, data=None, headers=None, text=None):

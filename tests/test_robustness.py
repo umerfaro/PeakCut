@@ -30,6 +30,34 @@ with ctx.as_user(a.id):
     check("a log that passed its limit is cut down to the recent lines", f.stat().st_size < 200_000 and len(f.read_text(encoding="utf-8").splitlines()) <= creators.LOG_KEEP_LINES + 1)
     check("...and the newest line survived the cut", creators.read_log(c["id"], 1)[0]["msg"] == "after the big one")
 
+# ---------------------------------------------------------------- the machine monitor on this computer
+# The processor and memory readings are written per platform. On one PeakCut cannot measure, free memory falls
+# back to a fixed 99.0 GB and the processor reads 0 forever, so busy() never fires and the guard that holds new
+# videos back while the machine is full is silently off. These two checks are what notice that.
+try:                      # macOS updates these counts lazily, so wait for them to move rather than assume a gap
+    busy0, tot0 = busy1, tot1 = load._cpu_times()
+    waited = time.time()
+    while tot1 == tot0 and time.time() - waited < 5:
+        time.sleep(0.1)
+        busy1, tot1 = load._cpu_times()
+    cpu_ok = tot1 > tot0 and busy1 >= busy0 and 0 <= busy1 <= tot1
+    cpu_why = f"{(busy0, tot0)} -> {(busy1, tot1)} after {time.time() - waited:.1f}s"
+except OSError as e:
+    cpu_ok, cpu_why = False, f"the processor cannot be read here: {e!r}"
+check("the monitor reads this computer's processor", cpu_ok, cpu_why)
+
+try:                      # Windows has no sysconf: there, only the lower bound and the 99.0 fallback are checked
+    phys_gb = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGESIZE") / 1e9
+except (AttributeError, ValueError, OSError):
+    phys_gb = float("inf")
+try:
+    ram = load._ram_free_gb()
+    ram_ok = 0.05 < ram <= phys_gb and ram != 99.0
+    ram_why = f"{ram:.2f} GB free of {phys_gb:.0f} GB"
+except OSError as e:
+    ram_ok, ram_why = False, f"free memory cannot be read here: {e!r}"
+check("the monitor reads this computer's free memory", ram_ok, ram_why)
+
 # ---------------------------------------------------------------- the machine monitor on a system it cannot fully measure
 def boom(): raise OSError("no /proc/stat here")
 load._cpu_times = boom

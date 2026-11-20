@@ -40,28 +40,50 @@ assert str(d).startswith(os.environ["PEAKCUT_DATA"]), "the test must only touch 
 check("no model to begin with", fetch_model.ready(), False)
 d.mkdir(parents=True); (d / "tokens.txt").write_text("a 1")
 check("half a model (a download that was cut off) does not count", fetch_model.ready(), False)
-def fake_download(url, dest, hook=None):
-    buf = tempfile.mkdtemp(prefix="pc-tar-")
-    src = Path(buf) / config.ASR_MODEL_NAME; src.mkdir()
+class Stream:
+    """What urlopen gives back: read() in pieces, then b"". `stall` makes it time out partway, like a dead connection."""
+    def __init__(self, data, stall=False): self.f, self.stall = io.BytesIO(data), stall; self.headers = {"Content-Length": str(len(data))}
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    def read(self, n=-1):
+        if self.stall and self.f.tell() > 0: raise TimeoutError("The read operation timed out")
+        return self.f.read(5 if self.stall else n)
+def model_bytes():
+    buf = tempfile.mkdtemp(prefix="pc-tar-"); src = Path(buf) / config.ASR_MODEL_NAME; src.mkdir()
     for n in ("tokens.txt", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"):
         (src / n).write_bytes(b"model")
-    with tarfile.open(dest, "w:bz2") as t:
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:bz2") as t:
         t.add(src, arcname=config.ASR_MODEL_NAME)
-    if hook: hook(1, 100, 100)
-fetch_model.urllib.request.urlretrieve = fake_download
+    return out.getvalue()
+seen = {}
+def fake_open(req, timeout=None):
+    seen["timeout"] = timeout
+    return Stream(model_bytes())
+fetch_model.urllib.request.urlopen = fake_open
 fetch_model.ensure()
 check("the model is downloaded by itself and put in place whole", (fetch_model.ready(), sorted(p.name for p in d.iterdir())),
       (True, ["decoder.int8.onnx", "encoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"]))
 check("nothing is left over from the download", sorted(p.name for p in config.MODELS_DIR.iterdir()), [config.ASR_MODEL_NAME])
+check("the download gives up on a silent connection instead of waiting forever", seen["timeout"], lambda t: t is not None and 0 < t <= 120)
 shutil.rmtree(d)
-def no_internet(url, dest, hook=None):
+def no_internet(req, timeout=None):
     raise OSError("getaddrinfo failed")
-fetch_model.urllib.request.urlretrieve = no_internet
+fetch_model.urllib.request.urlopen = no_internet
 try:
     fetch_model.ensure(); said = ""
 except RuntimeError as e:
     said = str(e)
 check("no internet: said in plain words, and no half model left behind", ("internet" in said, fetch_model.ready(), d.exists()), (True, False, False))
+check("the real reason is shown too, so it can be fixed", "getaddrinfo failed" in said, True)
+check("and so is how to try again by hand", "python -m studio.fetch_model" in said, True)
+fetch_model.urllib.request.urlopen = lambda req, timeout=None: Stream(model_bytes(), stall=True)
+try:
+    fetch_model.ensure(); said = ""
+except RuntimeError as e:
+    said = str(e)
+check("a connection that stalls partway fails cleanly, with its reason", "timed out" in said, True)
+check("a stalled download leaves no partial file and frees the lock", (sorted(p.name for p in config.MODELS_DIR.iterdir()), fetch_model.state["doing"], fetch_model._lock.locked()), ([], False, False))
 
 # ---- the AI
 check("an unknown model name", ai.explain("HTTP 404 models/gemini-old is not found for API version v1beta"), lambda s: "gemini-old" in s and "Find models" in s)

@@ -163,8 +163,14 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
         raise AIError(f"HTTP {r.status_code} {r.text[:200].replace(k or chr(0), '<key>')}")
     data = r.json()
     if how == "gemini":
-        found = [m.get("name", "").split("/")[-1] for m in data.get("models", [])
-                 if "generateContent" in (m.get("supportedGenerationMethods") or [])]
+        found = []
+        for m in data.get("models", []):
+            if "generateContent" not in (m.get("supportedGenerationMethods") or []):
+                continue
+            mid = m.get("name", "").split("/")[-1]
+            low_id = mid.lower()
+            if mid and low_id != "aqa" and not any(t in low_id for t in ("-tts", "-image", "imagen-", "veo-", "lyria-", "embedding")):
+                found.append(mid)
     else:
         found = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
     return sorted({m for m in found if m})[:400]
@@ -180,7 +186,12 @@ def test() -> dict:
 
 
 class AIError(RuntimeError):
-    pass
+    """A failed AI call. `wait` is how many seconds the service asked us to wait before trying again, when it
+    said so (a Retry-After header, or Gemini's retryDelay)."""
+    def __init__(self, message, wait=None, daily=False):
+        super().__init__(message)
+        self.wait = wait
+        self.daily = daily        # the limit is for the whole day, so waiting a minute won't help
 
 
 problem = {"text": "", "at": 0.0}       # why the AI last failed, for the dashboard; cleared when it answers again
@@ -190,10 +201,17 @@ def explain(e) -> str:
     """What went wrong with an AI call, in words the owner can act on."""
     text, low = str(e), str(e).lower()
     name = (models() or ["?"])[0]
-    if "404" in text or "not found" in low or "does not exist" in low or "unknown model" in low or "not_found" in low:
-        return f"{label()} doesn't know the model \"{name}\". Open Settings, AI, press Find models and pick one from the list."
-    if "401" in text or "403" in text or "api key" in low or "api_key" in low or "unauthorized" in low or "permission" in low:
+    m = re.match(r"HTTP (\d{3})\b", text)
+    status = m.group(1) if m else ""
+    if status in ("401", "403") or "api key" in low or "api_key" in low or "unauthorized" in low or "permission" in low:
         return f"{label()} refused the key. Paste a working key under Settings, AI."
+    if "no longer available" in low or "deprecated" in low or "retired" in low or "discontinued" in low:
+        return f"{label()} has retired \"{name}\" (or it isn't available to new keys). Open Settings, AI, press Find models and pick a newer model."
+    # Only a 404 that is about a model says the model is unknown. A 400 like "API key not found" or a stray
+    # "404" inside some other message must not be reported as an unknown model.
+    if (status == "404" and "model" in low) or (not status and ("404" in text or "not found" in low or "does not exist" in low or "unknown model" in low or "not_found" in low)) \
+            or (status and "is not found for api version" in low):
+        return f"{label()} doesn't know the model \"{name}\". Open Settings, AI, press Find models and pick one from the list."
     if "429" in text or "quota" in low or "rate limit" in low or "exhausted" in low:
         return f"{label()} says the key has hit its limit or has no credit left. Check the account with {label()}, or try again later."
     if "connect" in low or "timed out" in low or "timeout" in low or "getaddrinfo" in low or "refused" in low or "nodename" in low or "servname" in low or "nameresolutionerror" in low or "name resolution" in low:
@@ -212,9 +230,23 @@ def clear_problem():
     problem.update(text="", at=0.0)
 
 
+def asked_wait(r) -> float | None:
+    """How long the service asked us to wait, in seconds, or None when it didn't say."""
+    try:
+        v = (r.headers.get("retry-after") or "").strip()
+        if v:
+            return max(0.0, float(v))
+    except (ValueError, AttributeError):
+        pass
+    m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', getattr(r, "text", "") or "")
+    return float(m.group(1)) if m else None
+
+
 def _fail(r, model):
     text = r.text[:300].replace(key() or "\0", "<key>")
-    raise AIError(f"HTTP {r.status_code} {text}")
+    limited = r.status_code in (429, 503)
+    raise AIError(f"HTTP {r.status_code} {text}", wait=asked_wait(r) if limited else None,
+                  daily=limited and bool(re.search(r"PerDay|per day|daily", r.text or "", re.I)))
 
 
 # ---------------------------------------------------------------- the schema, said in words for chat models
@@ -316,7 +348,7 @@ def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, i
         body = {"contents": [{"role": "user", "parts": [
             {"text": prompt},
             {"inline_data": {"mimeType": "image/jpeg", "data": b64}}]}]}
-        r = httpx.post(f"{base_url()}/{model}:generateContent", json=body,
+        r = httpx.post(f"{base_url()}/{_gem(model)}:generateContent", json=body,
                        headers={"x-goog-api-key": key()}, timeout=timeout or 120)
         if r.status_code != 200:
             _fail(r, model)
@@ -350,17 +382,31 @@ def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, i
     return text, int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)
 
 
+def _gem(model: str) -> str:
+    """Gemini names models "models/gemini-2.5-flash"; the address already ends in /models, so only the bare id is used."""
+    return model.removeprefix("models/")
+
+
 def _gemini(model, prompt, schema, timeout=None):
+    url = f"{base_url()}/{_gem(model)}:generateContent"
+    headers = {"x-goog-api-key": key()}
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.4, "responseMimeType": "application/json", "responseSchema": schema}}
-    r = httpx.post(f"{base_url()}/{model}:generateContent", json=body, headers={"x-goog-api-key": key()}, timeout=timeout or 120)
+    r = httpx.post(url, json=body, headers=headers, timeout=timeout or 120)
+    used_plain = False
+    if r.status_code in (400, 422) and "api key" not in r.text.lower() and "api_key" not in r.text.lower():
+        # Models like Gemma in the Gemini list support generateContent without responseSchema.
+        plain = {"contents": [{"role": "user", "parts": [{"text": _wrapped(prompt, schema)}]}]}
+        r = httpx.post(url, json=plain, headers=headers, timeout=timeout or 120)
+        used_plain = True
     if r.status_code != 200:
         _fail(r, model)
     data = r.json()
     text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
     u = data.get("usageMetadata", {})
     sent = int(u.get("promptTokenCount") or 0)
-    return json.loads(text), sent, max(0, int(u.get("totalTokenCount") or 0) - sent)   # the answer, and any thinking billed with it
+    parsed = _parse(text) if used_plain else json.loads(text)
+    return parsed, sent, max(0, int(u.get("totalTokenCount") or 0) - sent)   # the answer, and any thinking billed with it
 
 
 def _openai_body(r):

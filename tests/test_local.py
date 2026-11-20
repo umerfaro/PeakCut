@@ -118,6 +118,27 @@ put({"provider": "gemini", "models": "g-fast", "key": "wrong-key-000000000000"})
 r = post("/api/ai/test")
 check("a failed test says why, without the key", (r.status_code, "wrong-key-000000000000" in r.text), (502, False))
 
+# ---- a clip downloaded on its own is saved under its title, not "clip01.mp4"
+from pathlib import Path  # noqa: E402
+from urllib.parse import unquote  # noqa: E402
+
+from studio import auth, ctx, jobs  # noqa: E402
+
+with ctx.as_user(auth.local_user().id):
+    job = jobs.create({"type": "file", "path": "", "name": "v.mp4"}, {}, enqueue=False)
+    (Path(job["dir"]) / "clips").mkdir(parents=True, exist_ok=True)
+    (Path(job["dir"]) / "clips" / "clip01.mp4").write_bytes(b"x" * 100)
+    (Path(job["dir"]) / "clips" / "clip02.mp4").write_bytes(b"x" * 100)
+    job["clips"] += [{"id": "clip01", "status": "done", "file": "clip01.mp4", "title": "Kai Gets Locked Up in GTA 6", "hook": "PRISON"},
+                     {"id": "clip02", "status": "done", "file": "clip02.mp4", "title": "", "hook": ""}]
+    jobs.save(job)
+r = c.get(f"/media/{job['id']}/clip01.mp4?download=1")
+check("a single clip downloads under its title", (r.status_code, "Kai Gets Locked Up in GTA 6.mp4" in unquote(r.headers.get("content-disposition", ""))), (200, True))
+r = c.get(f"/media/{job['id']}/clip02.mp4?download=1")
+check("a clip with no title keeps its id", "clip02.mp4" in r.headers.get("content-disposition", ""), True)
+r = c.get(f"/media/{job['id']}/clip01.mp4")
+check("playing a clip in the page is not turned into a download", "content-disposition" not in r.headers, True)
+
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil  # noqa: E402
 db.engine.dispose()

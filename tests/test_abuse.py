@@ -92,6 +92,62 @@ print(server._ip(R("203.0.113.9", {"cf-connecting-ip": "1.2.3.4"})),
 """
 got = subprocess.run([sys.executable, "-c", probe], cwd=sys.argv[2], capture_output=True, text=True).stdout.split()
 check("a forged visitor header is ignored, the CDN's is used", got, ["203.0.113.9", "1.2.3.4", "198.51.100.7"])
+
+# ---- X-Forwarded-For: only believed from a proxy on a private address, across repeated headers and Uvicorn proxy_headers
+probe_xff = """
+import os
+os.environ["PEAKCUT_CLIENT_IP_HEADER"] = "CF-Connecting-IP"
+from studio import server
+from starlette.datastructures import Headers
+class R:
+    def __init__(s, peer, h): s.headers = Headers(h) if isinstance(h, dict) else Headers(raw=h); s.client = type("C", (), {"host": peer})()
+cases = [
+    ("1", "10.0.0.2", {"x-forwarded-for": "172.67.1.1, 198.51.100.7", "cf-connecting-ip": "1.2.3.4"}),
+    ("1", "10.0.0.2", [(b"x-forwarded-for", b"172.67.1.1"), (b"x-forwarded-for", b"198.51.100.7"), (b"cf-connecting-ip", b"1.2.3.4")]),
+    ("1", "10.0.0.2", {"x-forwarded-for": "9.9.9.9, 172.67.1.1", "cf-connecting-ip": "1.2.3.4"}),
+    ("1", "203.0.113.9", {"x-forwarded-for": "172.67.1.1", "cf-connecting-ip": "1.2.3.4"}),
+    ("0", "10.0.0.2", {"x-forwarded-for": "198.51.100.7"}),
+]
+out = []
+for trust, peer, h in cases:
+    os.environ["PEAKCUT_TRUST_PROXY"] = trust
+    out.append(server._ip(R(peer, h)))
+print(" ".join(out))
+"""
+got_xff = subprocess.run([sys.executable, "-c", probe_xff], cwd=sys.argv[2], capture_output=True, text=True).stdout.split()
+check("the rightmost forwarded hop is believed only from a private proxy", got_xff,
+      ["198.51.100.7", "198.51.100.7", "1.2.3.4", "203.0.113.9", "10.0.0.2"])
+
+probe_uvi = """
+import asyncio, os
+from unittest import mock
+os.environ["PEAKCUT_CLIENT_IP_HEADER"] = "CF-Connecting-IP"; os.environ["PEAKCUT_TRUST_PROXY"] = "1"
+from fastapi import Request
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+from studio import server
+captured = {}
+with mock.patch.object(server.uvicorn, "run", side_effect=lambda *a, **k: captured.update(k)):
+    server.main()
+seen = []
+async def inner(scope, receive, send):
+    seen.append(server._ip(Request(scope)))
+mw = ProxyHeadersMiddleware(inner, trusted_hosts=captured["forwarded_allow_ips"]) if captured.get("proxy_headers") else inner
+async def go():
+    for peer, hdrs in [
+        ("10.0.0.2", [(b"x-forwarded-for", b"172.67.1.1, 198.51.100.7"), (b"cf-connecting-ip", b"1.2.3.4")]),
+        ("203.0.113.9", [(b"x-forwarded-for", b"172.67.1.1"), (b"cf-connecting-ip", b"1.2.3.4")]),
+    ]:
+        await mw({"type": "http", "client": (peer, 1234), "headers": hdrs, "scheme": "http"}, None, None)
+asyncio.run(go())
+os.environ["PEAKCUT_TRUST_PROXY"] = "0"
+with mock.patch.object(server.uvicorn, "run", side_effect=lambda *a, **k: captured.update(k)):
+    server.main()
+seen.append(str(captured.get("proxy_headers")))
+print(" ".join(seen))
+"""
+got_uvi = subprocess.run([sys.executable, "-c", probe_uvi], cwd=sys.argv[2], capture_output=True, text=True).stdout.split()[-3:]
+check("uvicorn proxy_headers does not rewrite the client to a forged leftmost hop", got_uvi,
+      ["198.51.100.7", "203.0.113.9", "False"])
 check("redirects are never cached", fresh.get("/app", follow_redirects=False).headers.get("cache-control"), "private, no-store")
 check("a missing file is never cached", fresh.get("/brand/nope.png").headers.get("cache-control"), "private, no-store")
 

@@ -8,7 +8,7 @@ import tarfile
 import threading
 import urllib.request
 
-from . import config
+from . import config, safe
 
 URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{config.ASR_MODEL_NAME}.tar.bz2"
 _lock = threading.Lock()
@@ -23,9 +23,17 @@ def ready() -> bool:
     return all(any(d.glob(f"{part}*.onnx")) for part in ("encoder", "decoder", "joiner"))
 
 
-def _progress(blocks, size, total):
-    if total > 0:
-        state["percent"] = min(99, int(blocks * size * 100 / total))
+WAIT = 60   # seconds of silence from the connection before giving up, so a stalled download cannot hang everything
+
+def _download(dest):
+    """Save the archive to dest, giving up if the connection goes quiet for WAIT seconds."""
+    with urllib.request.urlopen(URL, timeout=WAIT) as r, open(dest, "wb") as f:
+        total, got = int(r.headers.get("Content-Length") or 0), 0
+        while chunk := r.read(1 << 20):
+            f.write(chunk)
+            got += len(chunk)
+            if total > 0:
+                state["percent"] = min(99, got * 100 // total)
 
 
 def ensure() -> None:
@@ -41,7 +49,7 @@ def ensure() -> None:
         config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
         tmp, part = config.MODELS_DIR / "speech-model.tar.bz2", config.MODELS_DIR / "speech-model.unpacking"
         try:
-            urllib.request.urlretrieve(URL, tmp, _progress)
+            _download(tmp)
             shutil.rmtree(part, ignore_errors=True)
             part.mkdir()
             with tarfile.open(tmp, "r:bz2") as t:
@@ -55,9 +63,10 @@ def ensure() -> None:
             got.rename(config.ASR_MODEL_DIR)
             print("  Speech model ready.\n", flush=True)
         except Exception as e:  # noqa: BLE001
-            state["error"] = str(e)[-200:]
+            state["error"] = safe.friendly(e, 200)
             raise RuntimeError("PeakCut couldn't download its speech model (about 480 MB, needed once). Check the "
-                               "internet connection and free disk space, then try again.") from e
+                               "internet connection and free disk space, then try again, or run "
+                               f"python -m studio.fetch_model to see what goes wrong. What it reported: {state['error']}") from e
         finally:
             state["doing"] = False
             tmp.unlink(missing_ok=True)

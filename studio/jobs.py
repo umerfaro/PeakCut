@@ -11,7 +11,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import brain, config, creators, ctx, facecam, games, load, media, quality, render, roman, safe, transcribe, usage
+from . import brain, config, creators, ctx, facecam, games, hashtags, load, media, quality, render, roman, safe, transcribe, usage
 
 class _FairQueue:
     """Whose video is next. Each person has their own line and the lines take turns, so someone who adds ten
@@ -108,7 +108,7 @@ _lock = threading.RLock()
 on_clip_ready: list = []   # callbacks (job, clip), run once when a clip first finishes
 
 DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "layout": "blur", "quality": 720,
-            "range_start": None, "range_end": None, "captions": True}
+            "range_start": None, "range_end": None, "captions": True, "hook_text": "", "description_text": ""}
 
 
 LIMITS = {"min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
@@ -122,6 +122,9 @@ def clean_options(options) -> dict:
             if not isinstance(v, bool):
                 raise ValueError("Captions must be on or off.")
             out[k] = v
+            continue
+        if k in ("hook_text", "description_text"):     # kept even when empty: it clears the creator's own text for this video
+            out[k] = creators.clean_hook(v) if k == "hook_text" else creators.clean_description(v)
             continue
         if k not in DEFAULTS or v in ("", None):
             continue
@@ -188,7 +191,27 @@ def save(job):
             return
         tmp = d / "job.json.tmp"
         tmp.write_text(text, encoding="utf-8")
-        tmp.replace(d / "job.json")
+        _put_in_place(tmp, d / "job.json")
+
+
+def _put_in_place(tmp: Path, target: Path):
+    """Move the freshly written job.json over the old one.
+
+    Windows refuses this ("Access is denied") for a moment whenever anything else has the old file open: a virus
+    scanner, the search indexer, or another part of PeakCut reading it. A download saves many times a second, so it
+    happens, and it used to stop the whole video. So it is tried again a few times, and if the file is still busy
+    it is written in place; as a last resort this save is skipped, because the next one carries the same news."""
+    for i in range(8):
+        try:
+            tmp.replace(target)
+            return
+        except PermissionError:
+            time.sleep(0.05 * (i + 1))
+    try:
+        target.write_text(tmp.read_text(encoding="utf-8"), encoding="utf-8")
+        tmp.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _set(job, **kw):
@@ -296,7 +319,9 @@ def create(source: dict, options: dict, enqueue=True, creator=None, kind="video"
     c = creators.get(creator) if creator else None
     if c:
         d = creators.root(c["id"]) / ("live" if kind == "live" else "videos") / jid
-        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions")}}
+        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions")},
+                "hook_text": creators.clean_hook(c.get("hook_text")),
+                "description_text": creators.clean_description(c.get("description_text"))}
     else:
         d, base, creator = config.user_dir(ctx.uid()) / "jobs" / jid, dict(DEFAULTS), None
     opts = {**base, **clean_options(options)}
@@ -629,7 +654,14 @@ def _run_job(job):
         pieces = span > LONG_VIDEO or meta["duration"] <= 0
         if not pieces:  # shorter video: fetch all of it in the background while the audio is worked on
             video = fetch.submit(media.download, src["url"], d, int(o["quality"]))
-        audio_file = media.download_audio(src["url"], d, lambda p: _set(job, progress=0.03 + 0.1 * p))
+        seen = [-1.0]
+
+        def got(p):                       # the bar moves in whole percents: no need to save the file a hundred times a second
+            if p - seen[0] >= 0.01 or p >= 1:
+                seen[0] = p
+                _set(job, progress=0.03 + 0.1 * p)
+
+        audio_file = media.download_audio(src["url"], d, got)
     else:
         pieces, audio_file = False, Path(src["path"])
         info = media.probe(audio_file)
@@ -794,6 +826,12 @@ def _run_job(job):
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"],
                      captions=o.get("captions", True), status="queued", version=0)
+            if o.get("hook_text"):        # the person's own big text, on every clip, in place of the AI's
+                c["hook"] = o["hook_text"]
+            if o.get("description_text"):  # ...and their own description, exactly as written
+                c["description"], c["fixed_description"] = o["description_text"], True
+            else:                          # no description of their own: 3 to 5 fitting hashtags go at the end of the AI's
+                hashtags.apply(c, words, job["title"], job["uploader"], game)
             # Only the gameplay layout uses a webcam, so it is only looked for then, and only once: a
             # stream with no webcam is not looked for again on every clip of it.
             if o["layout"] == "gameplay" and face is False:
