@@ -66,7 +66,7 @@ class _Quiet:
 def resolve(url: str) -> dict:
     """Ask yt-dlp for the stream's playable address. Raises NotLive if the channel is offline."""
     import yt_dlp
-    opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "logger": _Quiet(),
+    opts = {**media.ydl_base(), "quiet": True, "no_warnings": True, "noplaylist": True, "logger": _Quiet(),
             "format": "b[height<=720]/bv*[height<=720]+ba/b", **media.cookie_opts()}
     if media.is_youtube(url) and media.youtube_paused():
         raise NotLive(media.YT_BLOCKED)
@@ -76,7 +76,7 @@ def resolve(url: str) -> dict:
     except Exception as e:  # noqa: BLE001
         if media.note_refusal(url, e):
             raise NotLive(media.YT_BLOCKED) from e
-        raise NotLive(str(e)[-200:]) from e
+        raise NotLive(media.explain_download(e)[-200:]) from e
     if not info or not info.get("is_live"):
         raise NotLive("This channel is not live right now.")
     fmts = info.get("requested_formats") or [info]

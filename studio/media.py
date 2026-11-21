@@ -105,10 +105,29 @@ def cookie_opts() -> dict:
     return {"cookiefile": str(config.YT_COOKIES)} if config.YT_COOKIES.is_file() else {}
 
 
+def ydl_base() -> dict:
+    """Settings every yt-dlp call needs before it can see a real video file.
+
+    YouTube hides the video formats behind a short script. With only the
+    storyboard pictures left, yt-dlp says the format is not available. Deno
+    or Node runs that script. The script itself is fetched once from yt-dlp's
+    own project and kept after that."""
+    return {"remote_components": ["ejs:github"], "js_runtimes": {"deno": {}, "node": {}}}
+
+
+def explain_download(err) -> str:
+    """A plain reason for a failed download, in place of yt-dlp's own wording."""
+    text = str(err)
+    if "Requested format is not available" in text:
+        return ("YouTube did not hand over a video file. PeakCut needs Deno or Node on this computer "
+                "to unlock the formats. Install one of them, then try the clip again.")
+    return text
+
+
 def _ydl(opts):
     import yt_dlp
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
-    return yt_dlp.YoutubeDL({"noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
+    return yt_dlp.YoutubeDL({**ydl_base(), "noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
                              "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 20,
                              "concurrent_fragment_downloads": 4, **cookie_opts(), **opts})
 
@@ -282,6 +301,8 @@ def download_section(url: str, out_dir: Path, stem: str, start: float, end: floa
         try:
             return _download_section(url, out_dir, stem, start, end, height, exact)
         except Exception as error:
+            if "Requested format is not available" in str(error):
+                raise RuntimeError(explain_download(error)) from error
             transient = re.search(r"ffmpeg exited with code|timed out|connection reset|HTTP Error 50[234]", str(error), re.I)
             if isinstance(error, YouTubeBlocked) or not transient:
                 raise
