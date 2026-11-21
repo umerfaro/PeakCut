@@ -20,18 +20,44 @@ def face_crop(frames):
         for face in frame["faces"]:
             cx = face["x"] + face["width"] / 2
             cy = face["y"] + face["height"] / 2
-            if face["confidence"] >= .55 and .025 < face["width"] < .24 and (cx < .28 or cx > .72):
+            # A streamer standing back from the camera has a smaller face than usual.
+            # Game characters beside the webcam are larger and do not stay put.
+            if face["confidence"] >= .55 and .015 < face["width"] < .24 and (cx < .28 or cx > .72):
                 candidates.append((i, face, cx, cy))
     if not candidates:
         return None
-    # Allow more vertical drift so a standing or pacing streamer still counts
-    # as the same persistent face across the sampled frames.
-    clusters = ([row for row in candidates if abs(row[2] - cx) < .09 and abs(row[3] - cy) < .22]
-                for _, _, cx, cy in candidates)
-    cluster = max(clusters, key=lambda rows: (len({r[0] for r in rows}), median(r[1]["width"] for r in rows)))
+    # Keep the window tight. A jump stays inside the webcam; a character in the
+    # game just outside it must not be counted as the same face.
+    clusters = [[row for row in candidates if abs(row[2] - cx) < .055 and abs(row[3] - cy) < .10]
+                for _, _, cx, cy in candidates]
+
+    def rank(rows):
+        seen = len({r[0] for r in rows})
+        spread = (max(r[2] for r in rows) - min(r[2] for r in rows)
+                  + max(r[3] for r in rows) - min(r[3] for r in rows))
+        # Still and small: the webcam overlay, not a close-up in the game.
+        return seen, -spread, -median(r[1]["width"] for r in rows)
+
+    cluster = max(clusters, key=rank)
     if len({r[0] for r in cluster}) < max(2, len(frames) * .45):
         return None
-    faces = [r[1] for r in cluster]
+    # A second person sitting in the same webcam is a separate face. Pull them
+    # in so the crop covers the picture, not only whoever the detector prefers.
+    cx0, cy0 = median(r[2] for r in cluster), median(r[3] for r in cluster)
+    faces = []
+    seen_ids = set()
+    for rows in clusters:
+        if len({r[0] for r in rows}) < 3 or median(r[1]["width"] for r in rows) > .09:
+            continue
+        if abs(median(r[2] for r in rows) - cx0) > .12 or abs(median(r[3] for r in rows) - cy0) > .12:
+            continue
+        for row in rows:
+            mark = (row[0], round(row[2], 3), round(row[3], 3))
+            if mark not in seen_ids:
+                seen_ids.add(mark)
+                faces.append(row[1])
+    if not faces:
+        faces = [r[1] for r in cluster]
     fw = median(f["width"] for f in faces)
     fh = median(f["height"] for f in faces)
     x = max(0, min(f["x"] for f in faces) - fw * .45)
@@ -158,6 +184,10 @@ def detect(src, start, end):
                         measured = webcam_bounds(folder, portrait)
                         if measured:
                             return measured
+                        # A dark game behind a small camera often has no edge the
+                        # border search will trust. The faces still outline it.
+                        if portrait[2] < .25 and portrait[3] < .30:
+                            return portrait
                 except (OSError, ValueError, subprocess.SubprocessError):
                     pass  # Fall back to PeakCut's local webcam-border detector.
             sample = folder / "sample.mkv"
