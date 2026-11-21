@@ -24,7 +24,9 @@ def face_crop(frames):
                 candidates.append((i, face, cx, cy))
     if not candidates:
         return None
-    clusters = ([row for row in candidates if abs(row[2] - cx) < .09 and abs(row[3] - cy) < .12]
+    # Allow more vertical drift so a standing or pacing streamer still counts
+    # as the same persistent face across the sampled frames.
+    clusters = ([row for row in candidates if abs(row[2] - cx) < .09 and abs(row[3] - cy) < .22]
                 for _, _, cx, cy in candidates)
     cluster = max(clusters, key=lambda rows: (len({r[0] for r in rows}), median(r[1]["width"] for r in rows)))
     if len({r[0] for r in cluster}) < max(2, len(frames) * .45):
@@ -62,17 +64,20 @@ def webcam_bounds(folder, portrait):
     # expanding the crop into gameplay when an interior room edge is stronger.
     dx, dy = edges(frames, 2), edges(frames, 1)
 
-    def peaks(profile, low, high):
+    def peaks(profile, low, high, soft=False):
+        # Soft peaks keep weaker vertical camera edges that a busy game or menu
+        # would otherwise bury under a 7-threshold.
         low, high = max(1, int(low)), min(len(profile) - 1, int(high))
+        floor = 3 if soft else 7
         found = [i + 1 for i in range(low, high)
-                 if profile[i] >= 7 and profile[i] >= profile[i - 1]
+                 if profile[i] >= floor and profile[i] >= profile[i - 1]
                  and profile[i] > profile[i + 1]]
-        return sorted(found, key=lambda v: profile[v - 1], reverse=True)[:12]
+        return sorted(found, key=lambda v: profile[v - 1], reverse=True)[:80 if soft else 12]
 
     band_top, band_bottom = max(0, int(cy - fh * .5)), min(height, int(cy + fh * .5) + 1)
     vertical = np.percentile(dx[band_top:band_bottom], 35, axis=0)
-    lefts = peaks(vertical, cx - width * .4, cx - fw * .3)
-    rights = peaks(vertical, cx + fw * .3, cx + width * .4)
+    lefts = peaks(vertical, cx - width * .4, cx - fw * .3, soft=True)
+    rights = peaks(vertical, cx + fw * .3, cx + width * .4, soft=True)
     if cx < width * .3:
         lefts.append(0)
     if cx > width * .7:
@@ -84,8 +89,10 @@ def webcam_bounds(folder, portrait):
                 continue
             inset = min(4, (right - left) // 8)
             horizontal = np.percentile(dy[:, left + inset:right - inset], 35, axis=1)
-            tops = peaks(horizontal, cy - min(height * .43, fh * 2), cy - fh * .38)
-            bottoms = peaks(horizontal, cy + fh * .38, cy + min(height * .43, fh * 2))
+            # Search a little closer to the face so a standing or moving person
+            # still finds the real panel top and bottom.
+            tops = peaks(horizontal, cy - min(height * .43, fh * 2), cy - fh * .2)
+            bottoms = peaks(horizontal, cy + fh * .2, cy + min(height * .43, fh * 2))
             if cy < height * .3:
                 tops.append(0)
             if cy > height * .7:
@@ -121,7 +128,15 @@ def webcam_bounds(folder, portrait):
                     score *= (rw * rh / (width * height)) ** .08
                     if best is None or score > best[0]:
                         best = score, (left / width, top / height, rw / width, rh / height)
-    return best[1] if best else None
+    if best is None:
+        return None
+    # Keep the face crop inside the panel: a strong inner edge can shrink the
+    # measured box onto the face alone, which cuts off hair and shoulders.
+    mx, my, mw, mh = best[1]
+    px, py, pw, ph = portrait
+    left, top = min(mx, px), min(my, py)
+    right, bottom = max(mx + mw, px + pw), max(my + mh, py + ph)
+    return left, top, right - left, bottom - top
 
 
 def detect(src, start, end):

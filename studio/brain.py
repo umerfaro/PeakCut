@@ -17,6 +17,7 @@ SCHEMA = {
         "type": "OBJECT",
         "properties": {
             "start": {"type": "NUMBER"},
+            "action_start": {"type": "NUMBER"},
             "end": {"type": "NUMBER"},
             "score": {"type": "INTEGER"},
             "category": {"type": "STRING"},
@@ -52,6 +53,11 @@ Most checks should return []. Only return a moment you would stop scrolling for.
 RULES = """
 Rules:
 - Each clip is {min_len} to {max_len} seconds. Use the [seconds] values for start and end.
+- Include the cause BEFORE the reaction: setup, action, then payoff. A remark such as
+  "that was crazy" usually follows the event. Look back 10-20 seconds in the supplied transcript.
+- action_start: seconds when the setup or action begins, at or before start. Use the supplied timestamps.
+  Preserve silent gameplay between the setup and reaction. Never infer an unseen action from a title alone.
+- Prefer a shorter ending over spending the whole clip on commentary after the event.
 - Start on the setup line, not mid-sentence. End right after the payoff or reaction, on the last word of a
   complete sentence: never in the middle of a sentence or a thought. The clip must make sense on its own.
 - Do not pick intros, sponsor reads, "like and subscribe", or dead air.
@@ -239,7 +245,7 @@ def sentence_ends(words) -> list:
     return out
 
 
-def _snap(clip, lines, words, min_len, max_len, duration):
+def _snap(clip, lines, words, min_len, max_len, duration, context=0):
     """Start at the beginning of a line and end where a sentence ends, inside the allowed length. A clip that stops
     in the middle of a sentence feels cut off, so the sentence being said at the chosen end is finished; if that
     would take too long, the clip ends at the sentence before."""
@@ -263,7 +269,17 @@ def _snap(clip, lines, words, min_len, max_len, duration):
     # a short breath after the last word, but never into the next sentence
     nxt = next((w["s"] for w in words if w["s"] > e - 0.01), None)
     tail = 0.35 if nxt is None else min(0.35, max(0.08, nxt - e - 0.05))
-    return round(max(0.0, s - 0.15), 2), round(min(duration, e + tail), 2)
+    end = min(duration, e + tail)
+    start = max(0.0, s - 0.15, end - max_len)
+    if context:
+        # Reactions lag gameplay. Keep footage before the selected speech, including silence.
+        # The model can identify an earlier setup. Bound its lookback to the supplied excerpt.
+        action = _num(clip.get("action_start"), s)
+        floor = max(0.0, end - max_len)
+        desired = max(floor, min(s - context, max(s - 30, min(s, action))))
+        earlier = [line["s"] for line in lines if max(floor, desired - 4) <= line["s"] <= desired]
+        start = max(floor, (max(earlier) - .15) if earlier else desired)
+    return round(start, 2), round(end, 2)
 
 
 def fallback_by_loudness(db, words, n, max_len, duration):
@@ -334,7 +350,7 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
         note = "The AI was unavailable, so clips were picked by loudness only."
     clips = []
     for c in sorted(found, key=lambda c: -_num(c.get("score"))):
-        s, e = _snap(c, lines, words, min_len, max_len, duration)
+        s, e = _snap(c, lines, words, min_len, max_len, duration, context=10 if used_model else 0)
         if e - s < min(min_len, duration) - 1:
             continue
         if _overlaps(s, e, clips):
@@ -358,7 +374,7 @@ def find_live_clips(words, z, now, chat=None, title="", uploader="", min_len=15,
     out, _model, spent = ask_ai(prompt, purpose="Live check")
     clips = []
     for c in sorted((c for c in out if isinstance(c, dict)), key=lambda c: -_num(c.get("score"))):
-        s, e = _snap(c, lines, words, min_len, max_len, now)
+        s, e = _snap(c, lines, words, min_len, max_len, now, context=10)
         if e - s < min_len - 1 or _overlaps(s, e, list(existing) + clips):
             continue
         clips.append(_tidy(c, s, e, game))
@@ -476,7 +492,8 @@ def judge_transcript(words, start, now, title="", uploader="", min_len=15, max_l
     out, _model, spent = ask_ai(prompt, purpose="Live: words judge", timeout=timeout)
     clips = []
     for c in sorted((c for c in out if isinstance(c, dict)), key=lambda c: -_num(c.get("score"))):
-        s, e = _snap(c, lines, words, min_len, max_len, now)
+        s, e = _snap(c, lines, words, min_len, max_len, now, context=10)
+        s = max(start, s)
         if e - s < min_len - 1 or _overlaps(s, e, list(existing) + clips):
             continue
         clips.append(_tidy(c, s, e, game))

@@ -113,6 +113,19 @@ clips, info = brain.find_clips(w, db, 30.0, max_clips=1, min_len=8, max_len=14, 
 ends = brain.sentence_ends(w)
 check("with no AI, a clip picked by loudness still ends on a sentence end", len(clips) == 1 and any(0 <= clips[0]["end"] - x <= 0.4 for x in ends))
 
+# Reactions need the preceding action even when nobody speaks during it.
+words = [{"w": "Ready?", "s": 18, "e": 19}, {"w": "Wow!", "s": 30, "e": 31},
+         {"w": "Amazing.", "s": 35, "e": 36}]
+lines = brain.make_lines(words)
+s, e = brain._snap({"start": 30, "end": 36}, lines, words, 5, 30, 45, context=10)
+check("silent action before a reaction stays in the clip", s <= 20 and e >= 36)
+s, e = brain._snap({"start": 30, "end": 36, "action_start": 18}, lines, words, 5, 30, 45, context=10)
+check("an earlier setup from the AI is preserved", s <= 18 and e >= 36)
+s, e = brain._snap({"start": 30, "end": 36, "action_start": -500}, lines, words, 5, 15, 45, context=10)
+check("lookback respects the maximum clip duration", s >= 0 and e - s <= 15.01 and e >= 36)
+s, e = brain._snap({"start": 0, "end": 6}, [], [], 3, 10, 10, context=10)
+check("lookback at the start of a source stays nonnegative", s == 0 and e <= 10)
+
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil; shutil.rmtree(os.environ["PEAKCUT_DATA"], ignore_errors=True)
 sys.exit(1 if fails else 0)

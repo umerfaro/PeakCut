@@ -2168,10 +2168,32 @@ async function ytCookiesCard(logo) {
 async function saveSettings() { const d = {}; $$("#sform [data-s]").forEach(i => d[i.dataset.s] = i.value); await send("/api/settings", d, "PUT"); }
 
 /* ============================================================ clip editor */
+function adjacentClipId(job, cid, direction) {
+  const clips = job.status === "live" ? [...job.clips].reverse() : job.clips;
+  const index = clips.findIndex(c => c.id === cid);
+  return index >= 0 ? clips[index + direction]?.id : undefined;
+}
+async function navigateClip(direction) {
+  const job = jobOf(D.jid), clip = job?.clips.find(c => c.id === D.cid);
+  const next = job && adjacentClipId(job, D.cid, direction);
+  if (!clip || !next) return;
+  const changed = $$("#clipdlg [data-f]").some(input => {
+    const value = input.type === "checkbox" ? input.checked : input.type === "number" ? Number(input.value) : input.value;
+    return value !== (clip[input.dataset.f] ?? "");
+  });
+  if (changed && !await ask("Leave unsaved edits?", "Your edits to this clip have not been saved.", direction < 0 ? "Previous clip" : "Next clip")) return;
+  if (D.jid !== job.id || D.cid !== clip.id) return;
+  $("#clipdlg video")?.pause();
+  D.cid = next; D.sig = "";
+  drawClipDlg(true);
+  $("#clipdlg .panel").scrollTop = 0;
+  $("#clipdlg [data-act='closedlg']").focus();
+}
 function openClip(jid, cid) { D.jid = jid; D.cid = cid; D.sig = ""; drawClipDlg(true); $("#clipdlg").showModal(); }
 function drawClipDlg(full) {
   const j = jobOf(D.jid), c = j?.clips.find(x => x.id === D.cid), dlg = $("#clipdlg");
   if (!c) { if (dlg.open) dlg.close(); return; }
+  const next = adjacentClipId(j, c.id, 1), previous = adjacentClipId(j, c.id, -1);
   const m = `/media/${j.id}/`, sig = c.status + c.version;
   const stage = c.status === "done" ? `<video src="${m}${esc(c.file)}?v=${c.version}" poster="${m}${esc(c.cover)}?v=${c.version}" controls autoplay playsinline></video>`
     : c.status === "error" ? `<div class="err" style="padding:20px;text-align:center">${esc(c.error || "Could not make this clip.")}</div>`
@@ -2180,7 +2202,7 @@ function drawClipDlg(full) {
     dlg.innerHTML = `<div class="editor"><div class="stage" id="stage">${stage}</div>
       <div class="panel">
         <div class="job-head" style="margin:0"><div><span class="badge ${scoreCls(c.score)}" style="position:static">${c.judges ? "Words " + c.judges.words + (c.judges.reaction ? " · Reaction " + c.judges.reaction : "") : c.score ? "Score " + c.score : "Clipped by hand"}</span>
-          <p class="sub" style="margin-top:8px">${esc(c.reason || "")}</p></div><button class="btn icon ghost" data-act="closedlg" aria-label="Close">${ic("x")}</button></div>
+          <p class="sub" style="margin-top:8px">${esc(c.reason || "")}</p></div><div class="row"><button class="btn sm" data-act="prevclip" ${previous ? "" : "disabled"}>Previous clip</button><button class="btn sm" data-act="nextclip" ${next ? "" : "disabled"}>Next clip ${ic("arrowr")}</button><button class="btn icon ghost" data-act="closedlg" aria-label="Close">${ic("x")}</button></div></div>
         <h3>On the video</h3>
         <label class="f" data-hook-field>Big text<input data-f="hook" value="${esc(c.hook)}"></label>
         <label class="sw"><input type="checkbox" data-f="captions" data-caption-toggle ${c.captions === false ? "" : "checked"}>Generate captions</label>
@@ -2199,9 +2221,13 @@ function drawClipDlg(full) {
           : `<p class="help">No accounts connected yet. Connect one in Settings.</p>`}
         <div class="row" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--line)">
           ${c.status === "done" ? `<a class="btn" href="${m}${esc(c.file)}?download=1">${ic("down")}Download</a>` : ""}
-          <button class="btn" data-act="copy" data-j="${j.id}" data-c="${esc(c.id)}">${ic("copy")}Copy post text</button></div>
+          <button class="btn" data-act="copy" data-j="${j.id}" data-c="${esc(c.id)}">${ic("copy")}Copy post text</button>
+          <button class="btn" data-act="prevclip" ${previous ? "" : "disabled"}>Previous clip</button>
+          <button class="btn" data-act="nextclip" ${next ? "" : "disabled"}>Next clip ${ic("arrowr")}</button></div>
       </div></div>`;
   } else if (D.sig !== sig) $("#stage").innerHTML = stage;
+  $$("#clipdlg [data-act=nextclip]").forEach(button => button.disabled = !next);
+  $$("#clipdlg [data-act=prevclip]").forEach(button => button.disabled = !previous);
   D.sig = sig;
   put($("#dposts"), postPills(c));
 }
@@ -2341,6 +2367,7 @@ document.addEventListener("click", async e => {
     if (a === "tab") return setTab(d.t);
     if (a === "pickfile") return $("#file").click();
     if (a === "addmore") { const u = $("#url"); return u && !u.value ? (u.focus(), toast("Paste another link, or drop a file anywhere on the box.")) : $("#file").click(); }
+    if (a === "nextclip" || a === "prevclip") return navigateClip(a === "prevclip" ? -1 : 1);
     if (a === "closedlg") return $("#clipdlg").close();
     if (a === "openclip") return openClip(d.j, d.c);
     if (a === "newcreator") {
