@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from . import config, roman, stacked
+from . import config, hook_art, roman, stacked
 from .media import NO_WINDOW, run
 
 W, H = config.OUT_W, config.OUT_H
@@ -321,7 +321,11 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     if layout == "stacked" and _clean(hook):
         # Leave room for the two-line hook card and the largest animated caption.
         cap_y = FACE_H + 220
-    ass = build_ass(words if clip.get("captions", True) else [], start, end, hook, clip.get("style", "bounce"),
+    # Colour emoji are raster artwork, so neither libass nor a machine's font
+    # fallback can turn them into missing-glyph boxes. Stacked titles use the
+    # same artwork path for their full-width brushed divider.
+    image_hook = bool(_clean(hook)) and (layout == "stacked" or hook_art.has_emoji(_clean(hook)))
+    ass = build_ass(words if clip.get("captions", True) else [], start, end, "" if image_hook else hook, clip.get("style", "bounce"),
                     clip.get("highlight_words", []), hook_y, cap_y)
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
     # open files whose full path is longer than 260 characters on Windows, which a data folder deep inside other
@@ -334,7 +338,10 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
         graph = _filter(layout, fg_h, face) + "[v0]"
         if requested == "stacked":
             graph += f"drawbox=x=0:y=0:w=iw:h=ih:color={FRAME_COLOR}:t={FRAME_PX},"
-        result = _render_in(work, src, out_dir, name, start, end, layout, graph, ass, meta=meta)
+        if image_hook:
+            hook_art.make(_clean(hook), W, brush=layout == "stacked").save(work / "hook.png")
+        result = _render_in(work, src, out_dir, name, start, end, layout, graph, ass, meta=meta,
+                            hook_y=hook_y if image_hook else None)
         if requested == "stacked":
             result["layout"] = requested
         return result
@@ -342,15 +349,20 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, graph, ass: str, meta=None) -> dict:
+def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, graph, ass: str, meta=None, hook_y=None) -> dict:
     global _qsv_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     (work / "f").mkdir()
     for f in config.FONTS_DIR.glob("*.ttf"):
         shutil.copyfile(f, work / "f" / f.name)
+    title_input = []
     fc = graph + f"ass={name}.ass:fontsdir=f[v]"
+    if hook_y is not None:
+        title_input = ["-loop", "1", "-framerate", str(config.OUT_FPS), "-i", "hook.png"]
+        fc = (graph + f"ass={name}.ass:fontsdir=f[captioned];"
+              f"[captioned][1:v]overlay=x=(W-w)/2:y={hook_y}-h/2:shortest=1:format=auto[v]")
     base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
-            "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+            *title_input, "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000"]
     for k, v in (meta or {}).items():
         if v:

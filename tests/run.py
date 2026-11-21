@@ -52,6 +52,7 @@ def main() -> int:
                 ("deleting and bulk actions", ["tests/test_delete.py"]),
                 ("saving a video when Windows says busy", ["tests/test_jobsave.py"]),
                 ("your own big text on the clips", ["tests/test_bigtext.py"]),
+                ("brush divider and colour emoji", ["tests/test_hook_art.py"]),
                 ("hashtags made without an AI", ["tests/test_hashtags.py"]),
                 ("big uploads in pieces", ["tests/test_upload_parts.py", BASE]),
                 ("AI services", ["tests/test_ai.py"]),

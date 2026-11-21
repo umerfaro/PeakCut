@@ -120,6 +120,37 @@ try:
         box = stacked.webcam_bounds(Path(samples), (.06, .47, .08, .13))
     check("the full camera surrounds the detected face and reaches the source edge",
           all(abs(v * s - expected) <= 2 for v, s, expected in zip(box, (320, 180, 320, 180), (0, 76, 64, 40))))
+    # A moving camera inset, a stronger narrow counter below it, and a
+    # paused-game menu behind it must still produce the camera rectangle.
+    import numpy as np
+    rng = np.random.default_rng(42)
+    with TemporaryDirectory() as samples:
+        for i in range(8):
+            pixels = rng.integers(15, 65, (180, 320, 3), dtype=np.uint8)
+            pixels[:, :92] = (30, 35, 65)  # a persistent game-menu edge
+            pixels[72:83, :86] = 180       # menu selection above the camera
+            pixels[76:116, :64] = rng.integers(100, 190, (40, 64, 3), dtype=np.uint8)
+            pixels[116:122, :27] = 255     # narrow viewer counter
+            Image.fromarray(pixels).save(Path(samples) / f"frame{i}.jpg", quality=98)
+        measured = stacked.webcam_bounds(Path(samples), (.055, .46, .13, .19))
+    check("moving camera excludes its counter and the paused game menu",
+          measured, lambda value: value is not None and all(abs(v * scale - expected) <= 2
+              for v, scale, expected in zip(value, (320, 180, 320, 180), (0, 76, 64, 40))))
+    moderate = dict(face, confidence=.60)
+    check("moderate-confidence faces supported across frames are retained",
+          stacked.face_crop([{"faces": [moderate]}] * 8) is not None)
+    # A successful Vision process with no faces must still try the independent
+    # local border detector, rather than immediately returning a blurred layout.
+    import json
+    def fake_process(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps([{"faces": []}] * 8).encode())
+    with patch.object(stacked.sys, "platform", "darwin"), patch.object(stacked.shutil, "which", return_value="swift"), \
+         patch.object(stacked.subprocess, "run", side_effect=fake_process), \
+         patch.object(stacked.facecam, "detect", return_value={"conf": "high", "x": 0, "y": 76, "w": 64, "h": 40}) as local_detector, \
+         patch.object(stacked.facecam, "_size", return_value=(320, 180)):
+        fallback = stacked.detect(Path("source.mp4"), 0, 10)
+    check("missing Vision faces still use the local camera detector", local_detector.call_count, 1)
+    check("the independently detected camera is normalized", fallback, (0, 76 / 180, .2, 40 / 180))
     _, panel_h, _, captions = render.geometry(320, 180, "stacked", box)
     graph = render._filter("stacked", panel_h, box)
     check("the full webcam is scaled once without blurry side panels", "boxblur" not in graph and "vstack" in graph)

@@ -117,6 +117,18 @@ Only a sure answer is used. If the webcam is not found, the layout falls back to
 | a game panel in the bottom-right corner of a real stream | refused: it moves with the game behind it |
 | time | about 1-4 seconds, once per video or stream |
 
+### Facecam above gameplay
+
+The **Facecam on top, gameplay below** layout uses a fixed upper camera panel
+and a full-width white brush-style title strip across its divider. Enter the
+wording and any emojis in **Big text**. Long hooks fit on one or two lines;
+spoken captions remain beneath the divider.
+
+Colour emoji artwork is bundled locally, so exported titles do not depend on
+system emoji fonts or internet access. Joined families, skin tones and flags
+are supported. Existing video files keep their previous design until you use
+**Save and re-make clip**. Newly generated clips use the new divider.
+
 ## 4. Ad breaks and static screens
 
 Already covered: `studio/quality.py` finds the stretches of a video where
