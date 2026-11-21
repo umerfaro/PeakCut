@@ -139,6 +139,18 @@ try:
     moderate = dict(face, confidence=.60)
     check("moderate-confidence faces supported across frames are retained",
           stacked.face_crop([{"faces": [moderate]}] * 8) is not None)
+    # A rounded webcam has no straight border, so only the face box comes back,
+    # and that box runs down into the game. It is kept, and shortened to the top
+    # band so the hair and headphones stay in the picture.
+    tall = (0.775, 0.0, 0.225, 0.385)
+    fitted = stacked.camera_crop(None, tall, 1280, 720)
+    check("a rounded corner camera is kept from the face", fitted is not None)
+    check("it stays on the top edge, where the head is", fitted[1] == 0)
+    check("it is no taller than the top band, so the head is not cut off",
+          abs((fitted[2] / fitted[3]) * (1280 / 720) - (1080 / 768)) < 0.05)
+    wide = (0.0, 0.426, 0.225, 0.224)
+    check("a wide camera, like a hard-edged webcam, is left as it was measured",
+          stacked.camera_crop(wide, tall, 1920, 1080), wide)
     # A successful Vision process with no faces must still try the independent
     # local border detector, rather than immediately returning a blurred layout.
     import json

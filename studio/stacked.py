@@ -165,6 +165,52 @@ def webcam_bounds(folder, portrait):
     return left, top, right - left, bottom - top
 
 
+# The stacked layout's top band is 1080 wide and 768 tall (40% of the 1920 frame).
+# A camera taller than that band is scaled up and then cut off the top and the bottom,
+# which takes the hair and the headphones. A camera that is already this wide, or wider,
+# only loses a little of its sides, so it is left alone.
+_PANEL_W, _PANEL_H = 1080, 768
+
+
+def _fit_panel(box, src_w, src_h):
+    """Shorten a camera that is taller than the top band, keeping the head in frame.
+
+    A rounded webcam often has no straight edge the border search will trust, so the
+    box around the face runs down into the game. Filling the band from that tall box
+    cuts the head off. Shortening it to the band's own shape keeps the side the head
+    is on and drops the game underneath."""
+    x, y, w, h = box
+    if src_w <= 0 or src_h <= 0 or w <= 0 or h <= 0:
+        return None
+    panel = _PANEL_W / _PANEL_H
+    if (w / h) * (src_w / src_h) >= panel * 0.92:
+        return x, y, w, h
+    new_h = w * (src_w / src_h) / panel
+    if y <= 0.02:
+        y2 = y
+    elif y + h >= 0.98:
+        y2 = y + h - new_h
+    else:
+        y2 = y + (h - new_h) / 2
+    y2 = max(0.0, min(y2, 1.0 - new_h))
+    return x, y2, w, new_h
+
+
+def camera_crop(measured, portrait, src_w, src_h):
+    """The webcam to lift into the top band, or None when this is not one.
+
+    `measured` is the rectangle the borders gave, or None when a rounded corner
+    gave no border worth trusting. `portrait` is the box around the face that
+    stayed in the same corner. Either one is fitted to the band before it is used."""
+    box = _fit_panel(measured or portrait, src_w, src_h)
+    if box is None:
+        return None
+    x, y, w, h = box
+    if w > 0.45 or h > 0.65 or x < 0 or y < 0 or x + w > 1.02 or y + h > 1.02:
+        return None
+    return box
+
+
 def detect(src, start, end):
     """Return a normalized crop for this time range, including on a long replay."""
     with tempfile.TemporaryDirectory(prefix="pc-cam-") as directory:
@@ -182,12 +228,16 @@ def detect(src, start, end):
                     portrait = face_crop(json.loads(result.stdout))
                     if portrait:
                         measured = webcam_bounds(folder, portrait)
-                        if measured:
-                            return measured
-                        # A dark game behind a small camera often has no edge the
-                        # border search will trust. The faces still outline it.
-                        if portrait[2] < .25 and portrait[3] < .30:
-                            return portrait
+                        sample_path = next(folder.glob("frame*.jpg"), None)
+                        if sample_path is not None:
+                            with Image.open(sample_path) as sample:
+                                src_w, src_h = sample.size
+                            # A rounded webcam has no edge the border search will trust.
+                            # The face is still the camera: fit that box to the top band
+                            # instead of leaving the tiny corner picture in the game.
+                            found = camera_crop(measured, portrait, src_w, src_h)
+                            if found:
+                                return found
                 except (OSError, ValueError, subprocess.SubprocessError):
                     pass  # Fall back to PeakCut's local webcam-border detector.
             sample = folder / "sample.mkv"
@@ -197,7 +247,8 @@ def detect(src, start, end):
             if box and box["conf"] == "high":
                 width, height = facecam._size(sample)
                 if width and height and box["w"] < .45 * width:
-                    return box["x"] / width, box["y"] / height, box["w"] / width, box["h"] / height
+                    found = box["x"] / width, box["y"] / height, box["w"] / width, box["h"] / height
+                    return _fit_panel(found, width, height)
         except (OSError, subprocess.SubprocessError):
             pass
     return None
