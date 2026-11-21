@@ -1403,7 +1403,15 @@ function drawAdd(variant) {
   drawAtt();
 }
 const LAYOUT_SHORT = {blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen", left:"Keep left", right:"Keep right", fit:"Black bars", split:"Split screen", gameplay:"Gameplay + facecam", stacked:"Facecam on top"};
-const CAP_LOOK = {bounce:{font:"'Archivo Black'", hl:"#FFFF00", up:true}, hype:{font:"Anton", hl:"#FF3C3C", up:true}, clean:{font:"Poppins", hl:"#6BD7FF", up:false, w:800}};
+const CAP_LOOK = {
+  bounce:{font:"'Archivo Black'", hl:"#FFFF00", up:true}, glow:{font:"Poppins", hl:"#C46BFF", up:true, w:800},
+  pop:{font:"Anton", hl:"#FF3C3C", up:true}, word:{font:"'Archivo Black'", hl:"#FFFF00", up:true},
+  sing:{font:"Poppins", hl:"#FFFF00", up:true, w:800}, keyword:{font:"Poppins", hl:"#FFFF00", up:true, w:800},
+  bigwin:{font:"'Archivo Black'", hl:"#FFFF00", up:true}, hype:{font:"Anton", hl:"#FF3C3C", up:true},
+  neon:{font:"Anton", hl:"#00FFFF", up:true}, bouncein:{font:"'Archivo Black'", hl:"#FFD400", up:true},
+  subtitle:{font:"Poppins", hl:"#FFFFFF", up:false, w:800}, clean:{font:"Poppins", hl:"#6BD7FF", up:false, w:800},
+  minimal:{font:"Poppins", hl:"#6BD7FF", up:false, w:800}, softblur:{font:"Poppins", hl:"#E8E8E8", up:false, w:800},
+  rise:{font:"Poppins", hl:"#FFFF00", up:true, w:800}, type:{font:"Poppins", hl:"#FFFFFF", up:true, w:800}};
 function capPrev(k) {
   const s = CAP_LOOK[k] || {font:"inherit", hl:"#FF8B33", up:true};
   const t = s.up ? ["CLIP", "THIS"] : ["Clip", "this"];

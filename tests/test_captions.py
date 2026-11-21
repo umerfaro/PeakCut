@@ -32,9 +32,47 @@ def rejects_caption_value(call):
     return False
 
 
+def caption_text(line):
+    """The words of one subtitle event, after the ASS tags."""
+    return line.split("}", 1)[-1].strip()
+
+
+def style_marks(render):
+    """Each caption style leaves its own mark in the subtitle file, and Bounce still pops."""
+    words = [{"w": "one", "s": 0.2, "e": 0.7}, {"w": "two", "s": 0.7, "e": 1.2}, {"w": "three", "s": 1.2, "e": 1.7}]
+
+    def caps(style, highlight=None):
+        return render.build_ass(words, 0, 2.0, "", style, highlight or [], 300, 1380)
+
+    def spoken(ass):
+        return [line for line in ass.splitlines() if line.startswith("Dialogue:") and ",Cap," in line]
+
+    check("every style id fits the length the editor keeps", all(len(name) <= 20 for name in render.STYLES))
+    check("bounce, hype and clean are still offered", {"bounce", "hype", "clean"} <= set(render.STYLES))
+    bounce = caps("bounce")
+    check("bounce still pops the spoken word", "\\fscx94" in bounce and "\\t(0,90,\\fscx" in bounce)
+    for name in render.STYLES:
+        check(f"{name} writes a caption", any(caption_text(line) for line in spoken(caps(name))))
+    one = spoken(caps("word"))
+    check("one word puts a single word on each caption line", one and all(len(caption_text(line).split()) == 1 for line in one))
+    check("karaoke does not grow the spoken word", "\\fscx" not in caps("sing"))
+    check("minimal does not grow the spoken word", "\\fscx" not in caps("minimal"))
+    check("glow lays a soft colour behind the word", "\\blur" in caps("glow") and "\\blur" in caps("neon") and "\\blur" in caps("softblur"))
+    check("word rise moves the spoken word up into the line", "\\move(" in caps("rise"))
+    check("type uncovers the spoken word from the left", "\\clip(" in caps("type") and "\\t(" in caps("type"))
+    key = caps("keyword", ["two"])
+    accent = render.STYLES["keyword"]["active"]
+    two = [line for line in spoken(key) if caption_text(line) == "TWO"]
+    one = [line for line in spoken(key) if caption_text(line) == "ONE"]
+    check("keyword colours only the highlighted word", two and all(f"&H{accent}&" in line for line in two)
+          and one and all(f"&H{accent}&" not in line for line in one))
+    check("an unknown style falls back to the bounce pop", "\\fscx94" in caps("no-such-style"))
+
+
 def main(data):
     os.environ.update(PEAKCUT_DATA=data, DATABASE_URL="", PEAKCUT_ACCOUNTS="0")
     from studio import auth, brain, creators, ctx, db, jobs, render, roman, server
+    style_marks(render)
 
     db.init()
     try:

@@ -14,13 +14,45 @@ FRAME_COLOR = "0xFFD400"
 FRAME_PX = 6
 
 # ASS colours are &HBBGGRR. `size` is the ASS font size (line height); _Font turns it into real pixels.
+# `motion` is how the spoken word moves. pop grows it, still only recolours it, glow lays a soft
+# colour behind it, rise brings it up into the line, and type uncovers it from the left.
 STYLES = {
     "bounce": {"label": "Bounce", "font": "Poppins ExtraBold", "size": 132, "base": "FFFFFF", "active": "00F0FF",
-               "strong": "FFFFFF", "outline": 7, "pop": 112, "upper": True, "per": 3},
+               "strong": "FFFFFF", "outline": 7, "pop": 112, "upper": True, "per": 3, "motion": "pop"},
+    "glow": {"label": "Glow", "font": "Poppins ExtraBold", "size": 120, "base": "FFFFFF", "active": "FFB450",
+             "strong": "FFFFFF", "outline": 3, "pop": 100, "upper": True, "per": 3, "motion": "glow",
+             "glow": 8, "glow_colour": "FF50B4", "edge": "FF50B4"},
+    "pop": {"label": "Pop", "font": "Anton", "size": 156, "base": "FFFFFF", "active": "3C3CFF",
+            "strong": "00D7FF", "outline": 8, "pop": 126, "upper": True, "per": 2, "motion": "pop"},
+    "word": {"label": "One word", "font": "Archivo Black", "size": 148, "base": "FFFFFF", "active": "00F0FF",
+             "strong": "FFFFFF", "outline": 8, "pop": 116, "upper": True, "per": 1, "motion": "pop"},
+    "sing": {"label": "Karaoke", "font": "Poppins ExtraBold", "size": 112, "base": "FFFFFF", "active": "00FFFF",
+             "strong": "00FFFF", "outline": 6, "pop": 100, "upper": True, "per": 4, "motion": "still"},
+    "keyword": {"label": "Keyword", "font": "Poppins ExtraBold", "size": 116, "base": "FFFFFF", "active": "00FFFF",
+                "strong": "00FFFF", "outline": 6, "pop": 100, "upper": True, "per": 3, "motion": "still",
+                "only_highlight": True},
+    "bigwin": {"label": "Big win", "font": "Archivo Black", "size": 150, "base": "00FFFF", "active": "00FFFF",
+               "strong": "00FFFF", "outline": 14, "pop": 110, "upper": True, "per": 2, "motion": "pop"},
     "hype": {"label": "Hype", "font": "Anton", "size": 152, "base": "FFFFFF", "active": "3C3CFF",
-             "strong": "00D7FF", "outline": 7, "pop": 114, "upper": True, "per": 2},
+             "strong": "00D7FF", "outline": 7, "pop": 114, "upper": True, "per": 2, "motion": "pop"},
+    "neon": {"label": "Neon", "font": "Anton", "size": 132, "base": "FFFFFF", "active": "FFFF00",
+             "strong": "FFFFFF", "outline": 4, "pop": 100, "upper": True, "per": 2, "motion": "glow",
+             "glow": 5, "glow_colour": "FF00FF", "edge": "FF00FF"},
+    "bouncein": {"label": "Bounce in", "font": "Archivo Black", "size": 136, "base": "FFFFFF", "active": "00D4FF",
+                 "strong": "FFFFFF", "outline": 8, "pop": 120, "upper": True, "per": 2, "motion": "pop"},
+    "subtitle": {"label": "Subtitle", "font": "Poppins ExtraBold", "size": 72, "base": "FFFFFF", "active": "FFFFFF",
+                 "strong": "00FFFF", "outline": 4, "pop": 100, "upper": False, "per": 6, "motion": "still"},
     "clean": {"label": "Clean", "font": "Poppins ExtraBold", "size": 100, "base": "FFFFFF", "active": "6BD7FF",
-              "strong": "FFFFFF", "outline": 5, "pop": 106, "upper": False, "per": 4},
+              "strong": "FFFFFF", "outline": 5, "pop": 106, "upper": False, "per": 4, "motion": "pop"},
+    "minimal": {"label": "Minimal", "font": "Poppins ExtraBold", "size": 92, "base": "FFFFFF", "active": "6BD7FF",
+                "strong": "FFFFFF", "outline": 0, "pop": 100, "upper": False, "per": 4, "motion": "still"},
+    "softblur": {"label": "Soft blur", "font": "Poppins ExtraBold", "size": 108, "base": "FFFFFF", "active": "FFFFFF",
+                 "strong": "FFFFFF", "outline": 0, "pop": 100, "upper": False, "per": 3, "motion": "glow",
+                 "glow": 16, "glow_colour": "E8E8E8"},
+    "rise": {"label": "Word rise", "font": "Poppins ExtraBold", "size": 120, "base": "FFFFFF", "active": "00F0FF",
+             "strong": "FFFFFF", "outline": 7, "pop": 100, "upper": True, "per": 3, "motion": "rise"},
+    "type": {"label": "Type", "font": "Poppins ExtraBold", "size": 110, "base": "FFFFFF", "active": "FFFFFF",
+             "strong": "00FFFF", "outline": 6, "pop": 100, "upper": True, "per": 3, "motion": "type"},
 }
 HOOK = {"font": "Poppins ExtraBold", "size": 96, "ink": "14100E", "box": "FFFFFF", "pad_x": 36, "pad_y": 22, "radius": 26,
         "max_w": 900}
@@ -227,23 +259,62 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             total = sum(f.width(t, size) for t in texts) + gap * (len(texts) - 1)
         cy = cap_y - f.cap_shift(size)
         x = (W - total) / 2
-        p = st["pop"]
+        motion = st.get("motion") or "pop"
+        # A keyword style keeps every ordinary word white. Only a word the clip marked
+        # as a highlight takes the accent, whether or not it is the one being said.
+        def paint(word, speaking):
+            if st.get("only_highlight"):
+                return st["active"] if _key(word) in strong else st["base"]
+            if speaking:
+                return st["active"]
+            return st["strong"] if _key(word) in strong else st["base"]
+
+        def edge():
+            """A bright outline, for a glow. Other motions keep the outline from the style line."""
+            if motion != "glow":
+                return ""
+            return f"\\bord{st['outline']}\\3c&H{st.get('edge') or '000000'}&"
+
         for i, (w, t) in enumerate(zip(g, texts)):
             wd = f.width(t, size)
             p = max(104, min(st["pop"], 100 + int(2200 / max(wd, 1))))   # long words grow less, so they never touch their neighbours
-            pos = f"\\an5\\pos({x + wd / 2:.0f},{cy:.0f})\\fs{size}"
+            cx = x + wd / 2
+            pos = f"\\an5\\pos({cx:.0f},{cy:.0f})\\fs{size}"
             x += wd + gap
             a = max(g_start, w["s"] - start)
             b = (g[i + 1]["s"] - start) if i + 1 < len(g) else g_end
-            base = st["strong"] if _key(w["w"]) in strong else st["base"]
-            if a - g_start >= 0.02:                                                   # waiting to be said
-                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(a)},Cap,,0,0,0,,{{{pos}\\c&H{base}&}}{t}")
-            if b - a >= 0.02:                                                         # being said: colour and a quick pop, in front
-                ev.append(f"Dialogue: 2,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{pos}\\c&H{st['active']}&\\fscx94\\fscy94"
-                          f"\\t(0,90,\\fscx{p}\\fscy{p})\\t(90,200,\\fscx{p - 5}\\fscy{p - 5})}}{t}")
-            if g_end - b >= 0.02:                                                     # said
-                ev.append(f"Dialogue: 1,{_ts(b)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}\\c&H{base}&\\fscx{p - 5}\\fscy{p - 5}"
-                          f"\\t(0,90,\\fscx100\\fscy100)}}{t}")
+            rest = paint(w["w"], False)
+            live = paint(w["w"], True)
+            # Type and rise hide the word until it is said, so it is not already sitting there.
+            show_early = motion not in ("type", "rise")
+            if show_early and a - g_start >= 0.02:                            # waiting to be said
+                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(a)},Cap,,0,0,0,,{{{pos}{edge()}\\c&H{rest}&}}{t}")
+            if b - a >= 0.02:
+                if motion == "pop":
+                    look = (f"{pos}\\c&H{live}&\\fscx94\\fscy94"
+                            f"\\t(0,90,\\fscx{p}\\fscy{p})\\t(90,200,\\fscx{p - 5}\\fscy{p - 5})")
+                elif motion == "rise":
+                    ms = min(160, max(40, int((b - a) * 1000)))
+                    look = f"\\an5\\move({cx:.0f},{cy + 52:.0f},{cx:.0f},{cy:.0f},0,{ms})\\fs{size}\\c&H{live}&"
+                elif motion == "type":
+                    left, right = cx - wd / 2, cx + wd / 2
+                    top, bot = cy - size, cy + size * 0.45
+                    ms = max(60, int((b - a) * 1000))
+                    look = (f"{pos}\\c&H{live}&\\clip({left:.0f},{top:.0f},{left:.0f},{bot:.0f})"
+                            f"\\t(0,{ms},\\clip({left:.0f},{top:.0f},{right:.0f},{bot:.0f}))")
+                else:
+                    look = f"{pos}{edge()}\\c&H{live}&"
+                ev.append(f"Dialogue: 2,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{look}}}{t}")
+            if g_end - b >= 0.02:
+                extra = ""
+                if motion == "pop":
+                    extra = f"\\fscx{p - 5}\\fscy{p - 5}\\t(0,90,\\fscx100\\fscy100)"
+                ev.append(f"Dialogue: 1,{_ts(b)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}{edge()}\\c&H{rest}&{extra}}}{t}")
+            if motion == "glow" and st.get("glow"):
+                # The soft copy sits behind the word for as long as the word itself is on screen.
+                frm = g_start if show_early else a
+                ev.append(f"Dialogue: 0,{_ts(frm)},{_ts(g_end)},Cap,,0,0,0,,"
+                          f"{{{pos}\\blur{int(st['glow'])}\\bord0\\c&H{st.get('glow_colour') or live}&}}{t}")
     return head + "\n".join(ev) + "\n"
 
 
