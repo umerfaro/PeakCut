@@ -151,6 +151,29 @@ try:
     wide = (0.0, 0.426, 0.225, 0.224)
     check("a wide camera, like a hard-edged webcam, is left as it was measured",
           stacked.camera_crop(wide, tall, 1920, 1080), wide)
+    # The face box starts a little below the top of the frame. Shortening it
+    # must keep that top, where the hair is, instead of sliding down into the chat.
+    under = (0.80, 0.05, 0.18, 0.40)
+    fitted = stacked.camera_crop(None, under, 1920, 1080)
+    check("a camera just under the top of the frame keeps its head", fitted[1], 0.05)
+    # The padding around the face runs into the game. The camera's own edge is
+    # a line that stays put, and the crop should start there.
+    with TemporaryDirectory() as samples:
+        for i in range(6):
+            pixels = np.zeros((180, 320, 3), dtype=np.uint8)
+            pixels[:, :250] = (30 + i, 40, 70)
+            pixels[:, 250:] = (160, 120, 100)
+            Image.fromarray(pixels).save(Path(samples) / f"frame{i}.jpg", quality=98)
+        trimmed = stacked.trim_spill(Path(samples), (0.70, 0.02, 0.30, 0.55))
+    check("gameplay beside a rounded camera is cut back to the camera edge",
+          trimmed is not None and abs(trimmed[0] * 320 - 251) <= 2 and trimmed[0] + trimmed[2] > 0.99)
+    with TemporaryDirectory() as samples:
+        for i in range(6):
+            pixels = np.full((180, 320, 3), 40, dtype=np.uint8)
+            Image.fromarray(pixels).save(Path(samples) / f"frame{i}.jpg", quality=98)
+        plain = (0.70, 0.02, 0.28, 0.50)
+        check("a face box with no camera edge is left as it was",
+              stacked.trim_spill(Path(samples), plain), plain)
     # A successful Vision process with no faces must still try the independent
     # local border detector, rather than immediately returning a blurred layout.
     import json

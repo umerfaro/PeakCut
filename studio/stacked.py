@@ -186,7 +186,11 @@ def _fit_panel(box, src_w, src_h):
     if (w / h) * (src_w / src_h) >= panel * 0.92:
         return x, y, w, h
     new_h = w * (src_w / src_h) / panel
-    if y <= 0.02:
+    # The head is at the top of the box. A camera sitting just under the top of
+    # the frame is still that kind of camera: keep its top, and drop the chat
+    # and the game that the padding pulled in underneath. Centering that box
+    # slides the window down onto the chat and cuts the hair.
+    if y <= 0.08:
         y2 = y
     elif y + h >= 0.98:
         y2 = y + h - new_h
@@ -194,6 +198,70 @@ def _fit_panel(box, src_w, src_h):
         y2 = y + (h - new_h) / 2
     y2 = max(0.0, min(y2, 1.0 - new_h))
     return x, y2, w, new_h
+
+
+def trim_spill(folder, portrait):
+    """Cut the gameplay a rounded webcam's face box pulled in beside it.
+
+    The border search needs a straight edge on every side, so a rounded corner
+    comes back with no border and the padding around the face runs into the
+    game. That side of the camera is still one straight line that does not
+    move. Cut the box there. A camera that already reaches the frame keeps
+    that edge, so the headphones are not shaved off."""
+    images = []
+    for path in sorted(folder.glob("frame*.jpg")):
+        with Image.open(path) as image:
+            images.append(np.asarray(image.convert("RGB")))
+    if len(images) < 2:
+        return portrait
+    frames = np.stack(images)
+    height, width = frames.shape[1:3]
+    x, y, w, h = portrait
+    if w <= 0 or h <= 0:
+        return portrait
+    y0 = max(0, int(y * height))
+    y1 = min(height, int((y + h * 0.72) * height))
+    if y1 - y0 < 8:
+        return portrait
+    # One number per column: how hard the colour changes, and whether it stays
+    # put while the person and the game move.
+    delta = np.abs(np.diff(frames[:, y0:y1].astype(np.int16), axis=2)).mean(axis=3)
+    profile = np.median(delta, axis=(0, 1))
+    on_right = x + w / 2 > 0.5
+    if on_right:
+        lo = max(1, int(x * width))
+        hi = min(len(profile) - 2, int((x + w * 0.45) * width))
+    else:
+        lo = max(1, int((x + w * 0.55) * width))
+        hi = min(len(profile) - 2, int((x + w) * width))
+    if hi - lo < 4:
+        return portrait
+    window = profile[lo:hi]
+    peak_at = int(np.argmax(window)) + lo
+    peak = float(profile[peak_at])
+    # The camera edge is one strong line. Edges inside the room are weaker and
+    # spread out, so a busy face does not count as a border.
+    if peak < 14 or peak < float(np.median(window)) * 3:
+        return portrait
+    edge = (peak_at + 1) / width
+    inset = (edge - x) / w if on_right else (x + w - edge) / w
+    # Too close to the current side means there is nothing to cut. Too far in
+    # means the line is the person, not the camera.
+    if inset < 0.04 or inset > 0.36:
+        return portrait
+    if on_right:
+        x, w = edge, x + w - edge
+    else:
+        w = edge - x
+    if w < 0.08:
+        return portrait
+    # A corner camera that already reaches the picture should use that edge.
+    if on_right and x + w >= 0.965:
+        w = 1.0 - x
+    elif not on_right and x <= 0.035:
+        w += x
+        x = 0.0
+    return x, y, w, h
 
 
 def camera_crop(measured, portrait, src_w, src_h):
@@ -228,6 +296,25 @@ def detect(src, start, end):
                     portrait = face_crop(json.loads(result.stdout))
                     if portrait:
                         measured = webcam_bounds(folder, portrait)
+                        # The rectangle search keeps the face padding when it cannot
+                        # trust a rounded corner. That padding is the game. The
+                        # straight edge beside the face is the camera: use it.
+                        trimmed = trim_spill(folder, portrait)
+                        px, _, pw, _ = portrait
+                        on_right = px + pw / 2 > 0.5
+                        if measured is None:
+                            portrait = trimmed
+                        else:
+                            mx, _, mw, _ = measured
+                            if on_right:
+                                same_side = abs(mx - px) < 0.015
+                                moved = trimmed[0] > px + 0.02
+                            else:
+                                same_side = abs((mx + mw) - (px + pw)) < 0.015
+                                moved = trimmed[0] + trimmed[2] < px + pw - 0.02
+                            if same_side and moved:
+                                measured = None
+                                portrait = trimmed
                         sample_path = next(folder.glob("frame*.jpg"), None)
                         if sample_path is not None:
                             with Image.open(sample_path) as sample:
