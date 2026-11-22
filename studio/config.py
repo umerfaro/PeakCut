@@ -52,6 +52,13 @@ def _secret(var: str, file_var: str, pattern: str = r"\S{16,}") -> str:
     return _keep(("secret", var, file_var), lambda: _read_secret(var, file_var, pattern))
 
 
+def composio_key() -> str:
+    """The Composio API key: PEAKCUT_COMPOSIO_API_KEY, or the file named by PEAKCUT_COMPOSIO_API_KEY_FILE.
+
+    A key saved from the dashboard lives in the data folder and is read separately."""
+    return _secret("PEAKCUT_COMPOSIO_API_KEY", "PEAKCUT_COMPOSIO_API_KEY_FILE")
+
+
 def _read_secret(var: str, file_var: str, pattern: str) -> str:
     if env(var):
         return env(var).strip()

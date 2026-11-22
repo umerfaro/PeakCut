@@ -119,12 +119,21 @@ def _post(p):
         path = Path(job["dir"]) / "clips" / clip["file"]
         creator = creators.get(job["creator"]) or dict(creators.DEFAULTS, name="clips")
         title, cap = clip.get("title") or clip.get("hook") or "Clip", _caption(clip, creator)
-        if acc["platform"] == "youtube":
+        text = f"{title}\n\n{cap}"
+        if acc.get("via") == "composio":
+            from . import composio_post
+            if acc["platform"] == "instagram":
+                rid, url = composio_post.post_instagram(acc, path, text)
+            elif acc["platform"] == "facebook":
+                rid, url = composio_post.post_facebook(acc, path, title, text)
+            else:
+                raise RuntimeError("That kind of account is no longer supported.")
+        elif acc["platform"] == "youtube":
             rid, url = accounts.youtube_upload(acc, path, title, cap + "\n\n#Shorts", clip.get("hashtags", []), creator["privacy"])
         elif acc["platform"] == "instagram":
-            rid, url = accounts.instagram_upload(acc, path, f"{title}\n\n{cap}", job["id"])
+            rid, url = accounts.instagram_upload(acc, path, text, job["id"])
         elif acc["platform"] == "tiktok":
-            rid, url = accounts.tiktok_upload(acc, path, f"{title}\n\n{cap}", creator["privacy"])
+            rid, url = accounts.tiktok_upload(acc, path, text, creator["privacy"])
         else:
             raise RuntimeError("That kind of account is no longer supported.")
         p.update(status="posted", posted_at=time.time(), remote_id=rid, url=url, error=None)

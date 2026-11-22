@@ -3,7 +3,10 @@
 Stored under users/<user>/accounts. People connect YouTube, Instagram and TikTok with one click: they sign in on the
 platform's own page and come back. For that, whoever runs the server registers one app with each platform once
 (its id and secret), in .env or in the dashboard (Settings, Connected apps, Set up). Those belong to the server,
-never to users."""
+never to users.
+
+Instagram and Facebook can instead use accounts already connected in Composio. That needs only a Composio API key,
+not a Meta developer app. See composio_post.py."""
 import base64
 import hashlib
 import hmac
@@ -32,7 +35,7 @@ IG_UPLOAD = "https://rupload.facebook.com/ig-api-upload/v21.0"
 IG_SCOPES = "instagram_business_basic,instagram_business_content_publish"
 TT = "https://open.tiktokapis.com/v2"
 TT_SCOPES = "user.info.basic,video.publish"
-PLATFORM_NAMES = {"youtube": "YouTube", "instagram": "Instagram", "tiktok": "TikTok"}
+PLATFORM_NAMES = {"youtube": "YouTube", "instagram": "Instagram", "facebook": "Facebook", "tiktok": "TikTok"}
 
 
 def _dir() -> Path:
@@ -105,8 +108,29 @@ def app_keys(name: str) -> tuple:
     return (config.env(id_env) or "").strip(), (config.env(secret_env) or "").strip()
 
 
+def _server_admin() -> bool:
+    """The Composio key belongs to whoever runs the server, so only they may post with it."""
+    if not config.ACCOUNTS:
+        return True
+    from . import db
+    import sqlalchemy as sa
+    with db.engine.connect() as c:
+        row = c.execute(sa.select(db.users.c.is_admin).where(db.users.c.id == ctx.uid())).first()
+    return bool(row and row[0])
+
+
+def composio_for_me() -> bool:
+    from . import composio_post
+    return composio_post.ready() and _server_admin()
+
+
 def can_connect(platform: str) -> bool:
-    return all(app_keys(APP_FOR[platform]))
+    if platform == "facebook":
+        return composio_for_me()
+    if platform == "instagram" and composio_for_me():
+        return True
+    app = APP_FOR.get(platform)
+    return bool(app) and all(app_keys(app))
 
 
 def redirect_for(platform: str) -> str:
@@ -170,6 +194,8 @@ def _take_state(state: str, platform: str):
 
 def connect_url(platform: str) -> str:
     """Where the Connect button sends the browser: the platform's own sign-in page."""
+    if platform == "facebook":
+        raise ValueError("Facebook connects through Composio. Add the API key in Settings, then press Connect.")
     if platform not in APP_FOR:
         raise ValueError("Unknown platform.")
     if not can_connect(platform):
@@ -449,7 +475,60 @@ def instagram_upload(acc, path: Path, caption: str, job_id: str = ""):
     return pub["id"], link
 
 
+def composio_import(platform: str) -> list:
+    """Copy the Instagram account, or each Facebook Page, already connected in Composio into this user's accounts."""
+    from . import composio_post
+    if platform not in ("instagram", "facebook"):
+        raise ValueError("Unknown platform.")
+    if not composio_post.ready():
+        raise ValueError("Add a Composio API key in Settings, Connected apps, then press Connect again.")
+    if not _server_admin():
+        raise ValueError("Only the person who runs this server can connect accounts through Composio.")
+    linked = composio_post.connections(platform)
+    if not linked:
+        name = PLATFORM_NAMES[platform]
+        raise ValueError(f"No {name} account is connected in Composio yet. Connect it there, then press Connect again.")
+    names = []
+    if platform == "instagram":
+        for conn in linked:
+            me = composio_post.instagram_profile(conn["id"])
+            uid, username = str(me.get("id") or ""), str(me.get("username") or "")
+            if not uid or not username:
+                raise RuntimeError("Composio did not return the Instagram account.")
+            kind = str(me.get("account_type") or "").upper()
+            if kind and kind not in ("BUSINESS", "MEDIA_CREATOR"):
+                raise ValueError(f"@{username} is a personal Instagram account. Switch it to Creator or Business, then connect again.")
+            _put({"id": f"ig_{uid}", "platform": "instagram", "name": "@" + username, "added": time.time(),
+                  "user_id": uid, "via": "composio", "composio_account": conn["id"],
+                  "detail": "Posted through Composio"})
+            names.append("@" + username)
+        return names
+    for conn in linked:
+        pages = [p for p in composio_post.facebook_pages(conn["id"]) if _page_can_post(p)]
+        for page in pages:
+            pid, label = str(page.get("id") or ""), str(page.get("name") or "Facebook Page")
+            if not pid:
+                continue
+            _put({"id": f"fb_{pid}", "platform": "facebook", "name": label, "added": time.time(),
+                  "page_id": pid, "via": "composio", "composio_account": conn["id"],
+                  "detail": "Posted through Composio"})
+            names.append(label)
+    if not names:
+        raise ValueError("That Facebook login cannot post to any Page. In Composio, reconnect Facebook and allow the Page.")
+    return names
+
+
+def _page_can_post(page: dict) -> bool:
+    tasks = page.get("tasks")
+    if not tasks:
+        return bool(page.get("id"))
+    return "CREATE_CONTENT" in tasks or "MANAGE" in tasks
+
+
 def instagram_views(acc, media_id: str):
+    if acc.get("via") == "composio":
+        from . import composio_post
+        return composio_post.instagram_views(acc, media_id)
     r = httpx.get(f"{IG}/{media_id}/insights", params={"metric": "views"},
                   headers={"Authorization": f"Bearer {_ig_token(acc)}"}, timeout=30)
     if r.status_code != 200:

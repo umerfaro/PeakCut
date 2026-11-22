@@ -5,7 +5,8 @@ from urllib.parse import parse_qs, urlparse
 os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-connect-")
 os.environ.update(DATABASE_URL="", PEAKCUT_ACCOUNTS="1", PEAKCUT_PUBLIC_URL="https://clips.example.com", PEAKCUT_VERIFY_EMAIL="0",
                   GOOGLE_CLIENT_ID="", GOOGLE_CLIENT_SECRET="", GOOGLE_CLIENT_FILE="", PEAKCUT_IG_APP_ID="", PEAKCUT_IG_APP_SECRET="",
-                  PEAKCUT_TIKTOK_CLIENT_KEY="", PEAKCUT_TIKTOK_CLIENT_SECRET="")
+                  PEAKCUT_TIKTOK_CLIENT_KEY="", PEAKCUT_TIKTOK_CLIENT_SECRET="",
+                  PEAKCUT_COMPOSIO_API_KEY="", PEAKCUT_COMPOSIO_API_KEY_FILE="")
 sys.path.insert(0, ".")
 from pathlib import Path
 import sqlalchemy as sa
@@ -32,7 +33,7 @@ user, b = person("user@example.com")
 
 # ---- nothing is set up: the buttons say so, and only an admin may set it up
 st = b.get("/api/status").json()
-check("nothing can be connected before setup", st["connect"], {"youtube": False, "instagram": False, "tiktok": False})
+check("nothing can be connected before setup", st["connect"], {"youtube": False, "instagram": False, "facebook": False, "tiktok": False})
 check("a normal user cannot see the setup", b.get("/api/apps").status_code, 404)
 check("...or change it", b.put("/api/apps", json={"platform": "tiktok", "client_id": "abcd", "client_secret": "x"}, headers=ORIGIN).status_code, 404)
 r = b.get("/oauth/instagram/start")
@@ -48,7 +49,7 @@ check("secrets are never sent back", any("secret-value" in json.dumps(v) for v i
 check("each platform shows the address to register", apps["tiktok"]["redirect"], BASE + "/oauth/tiktok/callback")
 r = a.put("/api/apps", json={"platform": "tiktok", "client_id": "", "client_secret": "tiktok-secret-value2"}, headers=ORIGIN)
 check("a new secret alone keeps the saved id", accounts.app_keys("tiktok"), ("awtiktokkey123", "tiktok-secret-value2"))
-check("everyone can connect now", b.get("/api/status").json()["connect"], {"youtube": True, "instagram": True, "tiktok": True})
+check("everyone can connect now", b.get("/api/status").json()["connect"], {"youtube": True, "instagram": True, "facebook": False, "tiktok": True})
 
 # ---- YouTube cookies, for servers YouTube refuses
 from studio import media

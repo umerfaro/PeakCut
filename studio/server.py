@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from . import admin as admins
 from . import account, load
-from . import (accounts, ai, alerts, auth, config, creators, ctx, db, jobs, live, media, posting,
+from . import (accounts, ai, alerts, auth, composio_post, config, creators, ctx, db, jobs, live, media, posting,
                profiles, render, safe, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
@@ -610,7 +610,8 @@ def status(request: Request):
     me_ = _me(request)
     return {"user": auth.public(me_), "update": updates.latest() if me_.is_admin else None, "accounts": config.ACCOUNTS, "disk_full": load.disk_full(), "no_ffmpeg": bool(_tools.missing()), "links": {"repo": config.REPO_URL, "follow": config.FOLLOW_URL}, "ai": usage.brief(), "unread": notices.unread(),
             "tour": not accounts.settings()["tour_done"],
-            "youtube": accounts.youtube_ready(), "connect": {p: accounts.can_connect(p) for p in accounts.PLATFORM_NAMES}, "max_upload_mb": config.MAX_UPLOAD_MB, "upload_part_mb": config.UPLOAD_PART_MB, "max_batch": config.MAX_ACTIVE_JOBS_PER_USER,
+            "youtube": accounts.youtube_ready(), "composio": accounts.composio_for_me(),
+            "connect": {p: accounts.can_connect(p) for p in accounts.PLATFORM_NAMES}, "max_upload_mb": config.MAX_UPLOAD_MB, "upload_part_mb": config.UPLOAD_PART_MB, "max_batch": config.MAX_ACTIVE_JOBS_PER_USER,
             "styles": {k: v["label"] for k, v in render.STYLES.items()}, "layouts": render.LAYOUTS}
 
 
@@ -1400,6 +1401,40 @@ def remove_account(aid: str):
 def _back(**q):
     from urllib.parse import urlencode as _ue
     return RedirectResponse("/app/settings/apps?" + _ue(q), 303)
+
+
+@app.get("/api/composio")
+def composio_get(request: Request):
+    _admin(request)
+    return {"ready": composio_post.ready(), "from_env": composio_post.from_env()}
+
+
+@app.put("/api/composio")
+def composio_put(request: Request, body: dict = Body(...)):
+    _admin(request)
+    try:
+        if body.get("remove"):
+            composio_post.clear_key()
+        else:
+            composio_post.save_key(body.get("key"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ready": composio_post.ready(), "from_env": composio_post.from_env()}
+
+
+@app.get("/oauth/composio/{platform}/start")
+def composio_connect(platform: str):
+    """Bring in the Instagram account or Facebook Pages already connected in Composio. No Meta developer app."""
+    if platform not in ("instagram", "facebook"):
+        raise HTTPException(404)
+    try:
+        _throttle("connect:" + ctx.uid(), 30, 600)
+        names = accounts.composio_import(platform)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        return _back(connect_error=safe.friendly(e, 240))
+    return _back(connected=platform, name=", ".join(names))
 
 
 @app.get("/oauth/{platform}/start")

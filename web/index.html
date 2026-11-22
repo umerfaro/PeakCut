@@ -1945,7 +1945,7 @@ function nextSteps(o) {
   const st = [];
   if (!S.creators.length) st.push(["Add your first creator", "Give each streamer their own workspace, settings and folder.", "newcreator"]);
   if (!S.jobs.length) st.push(["Make your first clips", "Paste a video link in the box above.", "focusurl"]);
-  if (!S.accounts.length) st.push(["Connect a posting account", "YouTube, Instagram or TikTok, in one click.", "go:settings"]);
+  if (!S.accounts.length) st.push(["Connect a posting account", "YouTube, Instagram, Facebook or TikTok.", "go:settings"]);
   if (S.creators.length && !S.creators.some(c => c.auto_watch)) st.push(["Turn on auto-record", "Record by itself whenever a creator goes live.", "go:c:" + S.creators[0].id + ":setup"]);
   return st;
 }
@@ -2115,8 +2115,9 @@ async function drawSettings() {
       const yt = '<svg viewBox="0 0 24 24"><path fill="#fff" d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.5 3.55 12 3.55 12 3.55s-7.5 0-9.38.5A3.02 3.02 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 0 0 2.12 2.14c1.88.5 9.38.5 9.38.5s7.5 0 9.38-.5a3.02 3.02 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81zM9.55 15.57V8.43L15.82 12l-6.27 3.57z"/></svg>';
       const ig = '<svg viewBox="0 0 24 24"><path fill="#fff" d="M12 2.16c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23a3.7 3.7 0 0 1-.9 1.38c-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.7 3.7 0 0 1-1.38-.9 3.7 3.7 0 0 1-.9-1.38c-.16-.42-.36-1.06-.41-2.23C2.17 15.58 2.16 15.2 2.16 12s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41C8.42 2.17 8.8 2.16 12 2.16zM12 5.84a6.16 6.16 0 1 0 0 12.32 6.16 6.16 0 0 0 0-12.32zm0 10.16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.4-11.85a1.44 1.44 0 1 0 0 2.88 1.44 1.44 0 0 0 0-2.88z"/></svg>';
       const tt = '<svg viewBox="0 0 24 24"><path fill="#fff" d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.3 0 .59.04.86.13v-3.5a6.37 6.37 0 0 0-.86-.05A6.34 6.34 0 0 0 3.15 15.7a6.34 6.34 0 0 0 10.86 4.43 6.3 6.3 0 0 0 1.81-4.43V8.73a8.2 8.2 0 0 0 4.77 1.52V6.8a4.85 4.85 0 0 1-1-.11z"/></svg>';
-      const ok = S.status.connect || {}, admin = me.is_admin;
+      const ok = S.status.connect || {}, admin = me.is_admin, composio = !!(S.status.composio && admin);
       const setup = admin ? await api("/api/apps").catch(() => null) : null;
+      const comp = admin ? await api("/api/composio").catch(() => ({ready: composio, from_env: false})) : {ready: false, from_env: false};
       const GUIDE = {
         youtube: ["https://console.cloud.google.com/apis/credentials", "Google Cloud",
           ["Create a project and turn on <b>YouTube Data API v3</b>.", "Create an <b>OAuth client ID</b> of type <b>Web application</b>.",
@@ -2132,9 +2133,10 @@ async function drawSettings() {
           "Until TikTok reviews your app, clips are posted as private: only the account owner sees them."]};
       const card = (pf, name, logo, bg, desc) => {
         const accs = mine(pf), st = setup?.[pf], open = S.setupOpen === pf, g = GUIDE[pf];
-        const act = (ok[pf] ? `<a class="btn sm primary" href="/oauth/${pf}/start">${ic("plus")}${accs.length ? "Add another" : "Connect"}</a>`
+        const href = composio && (pf === "instagram" || pf === "facebook") ? `/oauth/composio/${pf}/start` : `/oauth/${pf}/start`;
+        const act = (ok[pf] ? `<a class="btn sm primary" href="${href}">${ic("plus")}${accs.length ? "Add another" : "Connect"}</a>`
             : admin ? `<button class="btn sm primary" data-act="appsetup" data-p="${pf}">${ic("cog")}Set up</button>` : `<span class="pill">Not set up on this server</span>`)
-          + (ok[pf] && admin ? `<button class="btn sm ghost" data-act="appsetup" data-p="${pf}" title="Change this server's ${name} app">${ic("cog")}</button>` : "");
+          + (ok[pf] && admin && g && !(composio && pf === "instagram") ? `<button class="btn sm ghost" data-act="appsetup" data-p="${pf}" title="Change this server's ${name} app">${ic("cog")}</button>` : "");
         const panel = open && st ? `<div class="appsetup">
             <p class="sub">To let people connect ${name}, register this server once with <a href="${g[0]}" target="_blank" rel="noopener">${g[1]}</a>. It takes about five minutes.</p>
             <ol>${g[2].map(x => `<li>${x}</li>`).join("")}</ol>
@@ -2147,10 +2149,26 @@ async function drawSettings() {
         return `<div class="appcard"><span class="applogo" style="background:${bg}">${logo}</span>
           <div class="apptx"><b>${name}</b><span>${desc}</span>${listOf(accs)}</div><div class="appact">${act}</div>${panel}</div>`;
       };
-      body.innerHTML = `<section class="set-sec"><h2>Connected apps</h2><p class="help">Connect the accounts PeakCut posts clips to: press Connect, sign in on the platform's own page, and you're back here. PeakCut never sees your passwords. Then pick which accounts each creator posts to, in that creator's Setup.</p>
+      const fb = '<svg viewBox="0 0 24 24"><path fill="#fff" d="M14.5 8.5V6.8c0-.7.5-1 1.2-1H17V3h-2.1C12.2 3 11 4.3 11 6.6v1.9H9v2.7h2V21h2.8v-9.8h2.3l.4-2.7h-2.7z"/></svg>';
+      const keyOpen = S.setupOpen === "composio";
+      const keyPanel = keyOpen ? `<div class="appsetup">
+          <p class="sub">PeakCut posts Instagram Reels and Facebook videos through <a href="https://dashboard.composio.dev" target="_blank" rel="noopener">Composio</a>, using the accounts you already connected there. A Meta developer app is not used.</p>
+          <ol><li>In Composio, connect Instagram and Facebook if they are not connected yet.</li>
+            <li>Copy the API key. A Connect key (it starts with ck_) is the one that uses the accounts you already connected.</li>
+            <li>Paste it here, save, then press Connect on Instagram and on Facebook.</li></ol>
+          ${comp.from_env ? `<p class="sub">The key is already set in the .env file. Change it there.</p><div class="row"><button class="btn ghost" data-act="appsetup" data-p="">Close</button></div>`
+            : `<label class="f">Composio API key<input id="composio_key" type="password" autocomplete="off" spellcheck="false" placeholder="${comp.ready ? "Saved. Paste a new one to replace it" : ""}"></label>
+               <div class="row"><button class="btn primary" data-act="composiosave">Save</button>${comp.ready ? `<button class="btn ghost" data-act="composiodel">Remove</button>` : ""}<button class="btn ghost" data-act="appsetup" data-p="">Close</button></div>`}
+        </div>` : "";
+      const fbAct = composio
+        ? `<a class="btn sm primary" href="/oauth/composio/facebook/start">${ic("plus")}${mine("facebook").length ? "Refresh" : "Connect"}</a><button class="btn sm ghost" data-act="appsetup" data-p="composio" title="Composio API key">${ic("cog")}</button>`
+        : admin ? `<button class="btn sm primary" data-act="appsetup" data-p="composio">${ic("cog")}Set up</button>` : `<span class="pill">Not set up on this server</span>`;
+      body.innerHTML = `<section class="set-sec"><h2>Connected apps</h2><p class="help">Connect the accounts PeakCut posts clips to. YouTube and TikTok sign in on the platform's own page. Instagram and Facebook can post through Composio, so a Meta developer app is not required. Then pick which accounts each creator posts to, in that creator's Setup.</p>
         <div class="apps">
           ${card("youtube", "YouTube", yt, "#FF0000", "Post clips to your channel as Shorts.")}
-          ${card("instagram", "Instagram", ig, "linear-gradient(45deg,#F58529,#DD2A7B,#8134AF)", "Post clips as Reels. Needs a Creator or Business account.")}
+          ${card("instagram", "Instagram", ig, "linear-gradient(45deg,#F58529,#DD2A7B,#8134AF)", composio ? "Post clips as Reels through Composio. Needs a Creator or Business account." : "Post clips as Reels. Needs a Creator or Business account.")}
+          <div class="appcard"><span class="applogo" style="background:#1877F2">${fb}</span>
+            <div class="apptx"><b>Facebook</b><span>Post clips to a Facebook Page through Composio.</span>${listOf(mine("facebook"))}</div><div class="appact">${fbAct}</div>${keyPanel}</div>
           ${card("tiktok", "TikTok", tt, "#000", "Post clips straight to your TikTok.")}
         </div></section>${admin ? await ytCookiesCard(yt) : ""}`;
     }
@@ -2521,6 +2539,14 @@ document.addEventListener("click", async e => {
     if (a === "appsave") {
       await send("/api/apps", {platform: d.p, client_id: $("#app_id").value, client_secret: $("#app_secret").value}, "PUT");
       S.setupOpen = ""; S.status = await api("/api/status"); toast("Saved. People can connect now.", "ok"); return drawSettings();
+    }
+    if (a === "composiosave") {
+      await send("/api/composio", {key: $("#composio_key").value}, "PUT");
+      S.setupOpen = ""; S.status = await api("/api/status"); toast("Saved. Press Connect on Instagram and Facebook.", "ok"); return drawSettings();
+    }
+    if (a === "composiodel") {
+      await send("/api/composio", {remove: true}, "PUT");
+      S.setupOpen = ""; S.status = await api("/api/status"); toast("Composio key removed.", "ok"); return drawSettings();
     }
     if (a === "bell") return openBell();
     if (a === "feedback") return openFeedback("bug");
