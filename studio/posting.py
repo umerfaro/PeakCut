@@ -53,9 +53,11 @@ def _mirror(p):
 
 
 def _next_slot(account_id, gap_min, cap):
-    """Earliest time that respects the gap between posts and the daily cap for this account."""
+    """Earliest time that keeps the gap between posts on this account. A daily cap of 0 means no daily limit."""
     mine = [p for p in _mine() if p["account"] == account_id and p["status"] in OPEN + ("posted",)]
     t = max(time.time(), max((p.get("posted_at") or p["due_at"] for p in mine), default=0) + gap_min * 60)
+    if not cap:
+        return t
     for _ in range(30):
         if sum(1 for p in mine if _day(p.get("posted_at") or p["due_at"]) == _day(t)) < cap:
             break

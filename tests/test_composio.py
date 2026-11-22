@@ -179,6 +179,16 @@ check("a Connect key publishes through Composio Connect", (rid, url), ("media9",
 sent = next(c for c in calls if c[0] == "MCP")
 check("the Connect key is sent as the consumer key", sent[3].get("x-consumer-api-key") == "ck_testkeyvalue123456" and "x-api-key" not in sent[3], True)
 
+import time as time_mod
+now = time_mod.time()
+with ctx.as_user(boss.id):
+    for i in range(3):
+        posting._posts.append({"user": boss.id, "account": "gap-test", "status": "scheduled", "due_at": now + i * 1800})
+    capped = posting._next_slot("gap-test", 30, 1)
+    open_cap = posting._next_slot("gap-test", 30, 0)
+check("a daily cap of 1 waits longer than the 30 minute gap", capped > open_cap + 60, True)
+check("a daily cap of 0 keeps the next post 30 minutes after the last", abs(open_cap - (now + 3 * 1800)) < 5, True)
+
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil
 db.engine.dispose()
