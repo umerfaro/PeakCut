@@ -188,6 +188,8 @@ with ctx.as_user(boss.id):
     open_cap = posting._next_slot("gap-test", 30, 0)
 check("a daily cap of 1 waits longer than the 30 minute gap", capped > open_cap + 60, True)
 check("a daily cap of 0 keeps the next post 30 minutes after the last", abs(open_cap - (now + 3 * 1800)) < 5, True)
+check("instagram's too many actions waits for hours", posting._retry_wait("User is performing too many actions (code: 9)") == 6 * 3600, True)
+check("any other failure is tried again in 10 minutes", posting._retry_wait("Composio did not answer."), 600)
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil

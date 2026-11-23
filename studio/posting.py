@@ -109,6 +109,14 @@ def _caption(clip, creator):
     return "\n\n".join(x for x in (clip.get("description", ""), tags, creator.get("post_footer", "")) if x)
 
 
+def _retry_wait(error: str) -> int:
+    """Seconds before a failed post is tried again. Instagram's own "too many actions" needs hours, not another try in 10 minutes."""
+    text = (error or "").lower()
+    if "too many actions" in text or "code: 9" in text:
+        return 6 * 3600
+    return 600
+
+
 def _post(p):
     job = jobs.get(p["job"])
     clip = next((c for c in job["clips"] if c["id"] == p["clip"]), None) if job else None
@@ -141,14 +149,20 @@ def _post(p):
         p.update(status="posted", posted_at=time.time(), remote_id=rid, url=url, error=None)
         creators.log(p["creator"], f"Posted to {acc['name']}: {title}")
     except Exception as e:  # noqa: BLE001
-        p["tries"] += 1
         p["error"] = str(e)[-300:]
-        if p["tries"] < 3 and clip and acc:
-            p.update(status="scheduled", due_at=time.time() + 600)  # try again in 10 minutes
+        wait = _retry_wait(p["error"])
+        if wait > 600 and clip and acc:
+            # Instagram is refusing because the account posted too much. Another try in 10 minutes only makes that worse.
+            p.update(status="scheduled", due_at=time.time() + wait)
+            creators.log(p["creator"], f"Instagram asked to slow down, so {p['title']} waits: {p['error']}")
         else:
-            p["status"] = "failed"
-            creators.log(p["creator"], f"Post failed on {p['account_name']}: {p['error']}")
-            alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
+            p["tries"] += 1
+            if p["tries"] < 3 and clip and acc:
+                p.update(status="scheduled", due_at=time.time() + wait)  # try again in 10 minutes
+            else:
+                p["status"] = "failed"
+                creators.log(p["creator"], f"Post failed on {p['account_name']}: {p['error']}")
+                alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
     _save()
     _mirror(p)
 
