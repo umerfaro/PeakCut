@@ -1263,6 +1263,17 @@ def edit_creator(cid: str, body: dict = Body(...)):
     return c
 
 
+@app.post("/api/creators/{cid}/reschedule")
+def reschedule_posts(cid: str):
+    """Move this creator's waiting posts onto the gap and daily limit just saved for them."""
+    _throttle("resched:" + ctx.uid(), 20, 600, "Wait a moment before moving the queue again.")
+    try:
+        moved = posting.reschedule(cid)
+    except KeyError:
+        raise HTTPException(404, "No such creator")
+    return {"moved": moved}
+
+
 @app.post("/api/creators/{cid}/live")
 def go_live(cid: str, body: dict = Body(default={})):
     _need_verified()

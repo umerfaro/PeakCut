@@ -10,10 +10,16 @@ from . import accounts, alerts, config, creators, ctx, jobs, live
 
 _lock = threading.RLock()
 _FILE = config.DATA_DIR / "posts.json"
+_HOLDS = config.DATA_DIR / "post_holds.json"   # account id -> unix time it may post again
 try:
     _posts: list = json.loads(_FILE.read_text(encoding="utf-8")) if _FILE.exists() else []
 except ValueError:
     _posts = []
+try:
+    _holds: dict = json.loads(_HOLDS.read_text(encoding="utf-8")) if _HOLDS.exists() else {}
+except ValueError:
+    _holds = {}
+_holds = {str(k): float(v) for k, v in _holds.items() if float(v) > time.time()}
 
 
 def _mine() -> list:
@@ -27,6 +33,12 @@ def _save():
         tmp = _FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(_posts, indent=1), encoding="utf-8")
         tmp.replace(_FILE)
+
+
+def _save_holds():
+    tmp = _HOLDS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(_holds), encoding="utf-8")
+    tmp.replace(_HOLDS)
 
 
 def forget(uid: str):
@@ -56,14 +68,64 @@ def _next_slot(account_id, gap_min, cap):
     """Earliest time that keeps the gap between posts on this account. A daily cap of 0 means no daily limit."""
     mine = [p for p in _mine() if p["account"] == account_id and p["status"] in OPEN + ("posted",)]
     t = max(time.time(), max((p.get("posted_at") or p["due_at"] for p in mine), default=0) + gap_min * 60)
+    hold = _holds.get(account_id, 0)
+    if hold > t:          # this account is in a pause, so nothing new is placed inside it
+        t = hold
     if not cap:
         return t
     for _ in range(30):
         if sum(1 for p in mine if _day(p.get("posted_at") or p["due_at"]) == _day(t)) < cap:
             break
-        lt = time.localtime(t + 86400)
-        t = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 9, 0, 0, 0, 0, -1))  # 9:00 next day
+        t = _morning_after(t)
     return t
+
+
+def _morning_after(t):
+    """09:00 the next morning, which is when a full day of posts continues."""
+    lt = time.localtime(t + 86400)
+    return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 9, 0, 0, 0, 0, -1))
+
+
+def reschedule(creator_id) -> int:
+    """Move this creator's waiting posts onto the gap and daily limit saved for them.
+
+    Posts that already went out, and one that is uploading now, stay where they are. The order on each
+    account stays the same. The first waiting post is the later of now and one gap after the last post
+    on that account. Returns how many posts moved."""
+    c = creators.get(creator_id)
+    if not c:
+        raise KeyError(creator_id)
+    gap, cap = int(c["post_gap_min"]) * 60, int(c["daily_cap"])
+    moved = []
+    with _lock:
+        mine = _mine()
+        accounts_waiting = {p["account"] for p in mine if p.get("creator") == creator_id and p["status"] == "scheduled"}
+        for aid in accounts_waiting:
+            rows = sorted((p for p in mine if p["account"] == aid and p.get("creator") == creator_id and p["status"] == "scheduled"),
+                          key=lambda p: (p.get("due_at") or 0, p.get("id") or ""))
+            taken = [p["posted_at"] for p in mine if p["account"] == aid and p["status"] == "posted" and p.get("posted_at")]
+            t = max(time.time(), _holds.get(aid, 0))
+            if taken:
+                t = max(t, max(taken) + gap)
+            for p in rows:
+                slot = t
+                if cap:
+                    for _ in range(40):
+                        if sum(1 for x in taken if _day(x) == _day(slot)) < cap:
+                            break
+                        slot = _morning_after(slot)
+                p.update(due_at=slot, error=None, tries=0)
+                taken.append(slot)
+                t = slot + gap
+                moved.append(p)
+        if moved:
+            _save()
+    for p in moved:
+        _mirror(p)
+    if moved:
+        creators.log(creator_id, f"Moved {len(moved)} waiting post{'s' if len(moved) != 1 else ''} onto a {c['post_gap_min']} minute gap.")
+        ctx.bump()
+    return len(moved)
 
 
 def enqueue(job, clip, account_ids, now=False) -> list:
@@ -109,12 +171,47 @@ def _caption(clip, creator):
     return "\n\n".join(x for x in (clip.get("description", ""), tags, creator.get("post_footer", "")) if x)
 
 
-def _retry_wait(error: str) -> int:
-    """Seconds before a failed post is tried again. Instagram's own "too many actions" needs hours, not another try in 10 minutes."""
+def _instagram_limited(error: str) -> bool:
+    """Instagram's own 'too many actions' (code 9): the account has published as much as Meta allows."""
     text = (error or "").lower()
-    if "too many actions" in text or "code: 9" in text:
-        return 6 * 3600
+    return "too many actions" in text or "code: 9" in text
+
+
+def _retry_wait(error: str) -> int:
+    """Seconds before a failed post is tried again. A plain failure is tried again in 10 minutes."""
     return 600
+
+
+def _pause_instagram(p, now=None):
+    """Stop this Instagram account for 24 hours from the first limit error, and move every waiting post past it.
+
+    A later error inside that window does not move the end. The order of the queue stays. Each post keeps
+    the gap already set for the creator, so they do not all go out together when the pause ends.
+    Returns the posts that moved, and the time posting may start again."""
+    now = time.time() if now is None else now
+    until = _holds.get(p["account"], 0)
+    if until <= now:
+        until = now + 24 * 3600
+        _holds[p["account"]] = until
+        _save_holds()
+    c = creators.get(p.get("creator")) or creators.DEFAULTS
+    gap = int(c.get("post_gap_min") or 60) * 60
+    with _lock:
+        rows = sorted((row for row in _posts if row.get("account") == p["account"] and row.get("status") == "scheduled"),
+                      key=lambda row: (row.get("due_at") or 0, row.get("id") or ""))
+        t = until
+        moved = []
+        for row in rows:
+            if (row.get("due_at") or 0) < t or _instagram_limited(row.get("error") or ""):
+                row["due_at"] = t
+                if _instagram_limited(row.get("error") or ""):
+                    row["error"] = None
+                    row["tries"] = 0
+                moved.append(row)
+                t += gap
+            else:
+                t = row["due_at"] + gap
+    return moved, until
 
 
 def _post(p):
@@ -150,19 +247,25 @@ def _post(p):
         creators.log(p["creator"], f"Posted to {acc['name']}: {title}")
     except Exception as e:  # noqa: BLE001
         p["error"] = str(e)[-300:]
+        if _instagram_limited(p["error"]) and clip and acc and p.get("platform") == "instagram":
+            # The first of these starts a 24 hour pause. Every waiting post on this account moves past it,
+            # so the next one in the queue is not tried while Instagram is still refusing.
+            p.update(status="scheduled", tries=0)
+            moved, until = _pause_instagram(p)
+            when = time.strftime("%b %d, %H:%M", time.localtime(until))
+            creators.log(p["creator"], f"Instagram blocked posting until {when}, so {len(moved)} waiting posts were moved forward.")
+            _save()
+            for row in moved:
+                _mirror(row)
+            return
         wait = _retry_wait(p["error"])
-        if wait > 600 and clip and acc:
-            # Instagram is refusing because the account posted too much. Another try in 10 minutes only makes that worse.
-            p.update(status="scheduled", due_at=time.time() + wait)
-            creators.log(p["creator"], f"Instagram asked to slow down, so {p['title']} waits: {p['error']}")
+        p["tries"] += 1
+        if p["tries"] < 3 and clip and acc:
+            p.update(status="scheduled", due_at=time.time() + wait)  # try again in 10 minutes
         else:
-            p["tries"] += 1
-            if p["tries"] < 3 and clip and acc:
-                p.update(status="scheduled", due_at=time.time() + wait)  # try again in 10 minutes
-            else:
-                p["status"] = "failed"
-                creators.log(p["creator"], f"Post failed on {p['account_name']}: {p['error']}")
-                alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
+            p["status"] = "failed"
+            creators.log(p["creator"], f"Post failed on {p['account_name']}: {p['error']}")
+            alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
     _save()
     _mirror(p)
 

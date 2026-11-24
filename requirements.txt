@@ -8,5 +8,5 @@ sherpa-onnx==2.0.1
 soundfile==0.14.0
 SQLAlchemy==2.0.57
 uvicorn==0.54.0
-yt-dlp==2026.10.21
+yt-dlp==2026.11.23
 pillow==11.3.0

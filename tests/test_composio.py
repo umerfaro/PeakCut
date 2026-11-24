@@ -7,7 +7,7 @@ os.environ.update(DATABASE_URL="", PEAKCUT_ACCOUNTS="1", PEAKCUT_PUBLIC_URL="htt
 sys.path.insert(0, ".")
 from pathlib import Path
 from fastapi.testclient import TestClient
-from studio import accounts, auth, composio_post, config, ctx, db, jobs, posting, server
+from studio import accounts, auth, composio_post, config, creators, ctx, db, jobs, posting, server
 db.init()
 fails = []
 def check(n, got, want=True):
@@ -182,14 +182,61 @@ check("the Connect key is sent as the consumer key", sent[3].get("x-consumer-api
 import time as time_mod
 now = time_mod.time()
 with ctx.as_user(boss.id):
+    # Keep the three posts on the same day as the next slot. Late at night, "now plus 90 minutes"
+    # is already tomorrow, and a daily cap would then see an empty day.
+    base = now
+    if time_mod.strftime("%Y-%m-%d", time_mod.localtime(now)) != time_mod.strftime("%Y-%m-%d", time_mod.localtime(now + 3 * 1800)):
+        nxt = time_mod.localtime(now + 86400)
+        base = time_mod.mktime((nxt.tm_year, nxt.tm_mon, nxt.tm_mday, 10, 0, 0, 0, 0, -1))
     for i in range(3):
-        posting._posts.append({"user": boss.id, "account": "gap-test", "status": "scheduled", "due_at": now + i * 1800})
+        posting._posts.append({"user": boss.id, "account": "gap-test", "status": "scheduled", "due_at": base + i * 1800})
     capped = posting._next_slot("gap-test", 30, 1)
     open_cap = posting._next_slot("gap-test", 30, 0)
 check("a daily cap of 1 waits longer than the 30 minute gap", capped > open_cap + 60, True)
-check("a daily cap of 0 keeps the next post 30 minutes after the last", abs(open_cap - (now + 3 * 1800)) < 5, True)
-check("instagram's too many actions waits for hours", posting._retry_wait("User is performing too many actions (code: 9)") == 6 * 3600, True)
+check("a daily cap of 0 keeps the next post 30 minutes after the last", abs(open_cap - (base + 3 * 1800)) < 5, True)
+check("instagram's too many actions is the posting limit", posting._instagram_limited("User is performing too many actions (code: 9)"), True)
 check("any other failure is tried again in 10 minutes", posting._retry_wait("Composio did not answer."), 600)
+
+with ctx.as_user(boss.id):
+    hold_creator = creators.create({"name": "Hold Tester"})
+    creators.update(hold_creator["id"], {"post_gap_min": 60, "daily_cap": 0})
+    posting._holds.pop("ig-hold", None)
+    for i, due in enumerate((now - 100, now + 60, now + 120)):
+        posting._posts.append({"id": f"h{i}", "user": boss.id, "creator": hold_creator["id"], "account": "ig-hold",
+                               "platform": "instagram", "status": "scheduled", "due_at": due,
+                               "error": "User is performing too many actions (code: 9)" if i == 0 else None, "tries": 1})
+    posting._posts.append({"id": "h-yt", "user": boss.id, "creator": hold_creator["id"], "account": "yt-hold",
+                           "platform": "youtube", "status": "scheduled", "due_at": now + 30})
+    failed = next(p for p in posting._posts if p.get("id") == "h0")
+    moved, until = posting._pause_instagram(failed, now=now)
+    again, until_again = posting._pause_instagram(failed, now=now + 60)
+    held = sorted((p for p in posting._posts if str(p.get("id", "")).startswith("h") and p.get("account") == "ig-hold"), key=lambda p: p["due_at"])
+    youtube = next(p for p in posting._posts if p.get("id") == "h-yt")
+check("the first limit error pauses instagram for 24 hours", abs(until - (now + 86400)) < 2, True)
+check("a later error does not move that pause", until_again, until)
+check("every waiting instagram post moved, and none twice", (len(moved), len(again)), (3, 0))
+check("they start when the pause ends, one hour apart", [round(held[i + 1]["due_at"] - held[i]["due_at"]) for i in range(2)], [3600, 3600])
+check("the limit error is cleared once the post has a new time", held[0].get("error") is None and held[0]["tries"] == 0, True)
+check("youtube keeps its own time", abs(youtube["due_at"] - (now + 30)) < 1, True)
+
+with ctx.as_user(boss.id):
+    gap_creator = creators.create({"name": "Gap Tester"})
+    creators.update(gap_creator["id"], {"post_gap_min": 60, "daily_cap": 0})
+    posted_at = now - 3600
+    posting._posts.append({"id": "rs-posted", "user": boss.id, "creator": gap_creator["id"], "account": "acc-rs",
+                           "status": "posted", "posted_at": posted_at, "due_at": posted_at})
+    posting._posts.append({"id": "rs-busy", "user": boss.id, "creator": gap_creator["id"], "account": "acc-rs",
+                           "status": "posting", "due_at": 1, "tries": 1, "error": "uploading"})
+    for i, due in enumerate((now - 10000, now - 5000, now - 1000)):
+        posting._posts.append({"id": f"rs{i}", "user": boss.id, "job": "missing-job", "clip": "c", "creator": gap_creator["id"],
+                               "account": "acc-rs", "status": "scheduled", "due_at": due, "tries": 2, "error": "old"})
+    moved = posting.reschedule(gap_creator["id"])
+    waiting = sorted((p for p in posting._posts if str(p.get("id", "")).startswith("rs") and p["status"] == "scheduled" and not str(p.get("id")).startswith("rs-")), key=lambda p: p["due_at"])
+    busy = next(p for p in posting._posts if p.get("id") == "rs-busy")
+check("three waiting posts were moved onto the new gap", moved, 3)
+check("they sit one hour apart", [round(waiting[i + 1]["due_at"] - waiting[i]["due_at"]) for i in range(2)], [3600, 3600])
+check("the old error is cleared", waiting[0].get("error") is None and waiting[0]["tries"] == 0, True)
+check("a post that is uploading is left alone", (busy["due_at"], busy["error"]), (1, "uploading"))
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil

@@ -118,9 +118,9 @@ def ydl_base() -> dict:
 def explain_download(err) -> str:
     """A plain reason for a failed download, in place of yt-dlp's own wording."""
     text = str(err)
-    if "Requested format is not available" in text:
-        return ("YouTube did not hand over a video file. PeakCut needs Deno or Node on this computer "
-                "to unlock the formats. Install one of them, then try the clip again.")
+    if "Requested format is not available" in text or "No video formats found" in text:
+        return ("YouTube did not hand over a video file. PeakCut needs a current downloader, and Deno or Node, "
+                "to unlock the formats. Try the recording again.")
     return text
 
 
@@ -301,7 +301,7 @@ def download_section(url: str, out_dir: Path, stem: str, start: float, end: floa
         try:
             return _download_section(url, out_dir, stem, start, end, height, exact)
         except Exception as error:
-            if "Requested format is not available" in str(error):
+            if "Requested format is not available" in str(error) or "No video formats found" in str(error):
                 raise RuntimeError(explain_download(error)) from error
             transient = re.search(r"ffmpeg exited with code|timed out|connection reset|HTTP Error 50[234]", str(error), re.I)
             if isinstance(error, YouTubeBlocked) or not transient:
