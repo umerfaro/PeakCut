@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from . import config, hook_art, roman, stacked
+from . import config, roman, hook_art, stacked, templates
 from .media import NO_WINDOW, run
 
 W, H = config.OUT_W, config.OUT_H
@@ -56,7 +56,10 @@ STYLES = {
 }
 HOOK = {"font": "Poppins ExtraBold", "size": 96, "ink": "14100E", "box": "FFFFFF", "pad_x": 36, "pad_y": 22, "radius": 26,
         "max_w": 900}
-FONT_FILES = {"Poppins ExtraBold": "Poppins-ExtraBold.ttf", "Anton": "Anton-Regular.ttf", "Archivo Black": "ArchivoBlack-Regular.ttf"}
+# Urdu and Hindi in their own script: drawn with these whatever the style's font (its letters are Latin only), a
+# whole line at a time so the caption engine joins the letters and runs Urdu right to left
+SCRIPT_FONTS = {"ur": ("Noto Nastaliq Urdu", "NotoNastaliqUrdu-Bold.ttf", 1.3), "hi": ("Noto Sans Devanagari", "NotoSansDevanagari-Bold.ttf", 1.05)}
+FONT_FILES = {**templates.FONTS, **{n: f for n, f, _ in SCRIPT_FONTS.values()}}
 CAP_MAX_W = 960   # captions never run wider than this, whatever is said
 
 
@@ -102,6 +105,87 @@ class _Font:
     def cap_shift(self, size):
         """How far below the anchor the middle of a capital letter sits when text is centred on a point."""
         return ((self.asc - self.desc) / 2 - self.cap / 2) * size / (self.asc + self.desc)
+
+
+# The heading may end with an emoji ("bro gave up on his own race 😭"). The caption renderer cannot draw colour emoji,
+# so each one is drawn as a small picture from the system's emoji font and laid over the video where the text ends.
+EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF]")
+_EMOJI_EXTRA = re.compile("[\uFE0F\u200D\U0001F3FB-\U0001F3FF]")
+EMOJI_FONTS = ("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", r"C:\Windows\Fonts\seguiemj.ttf")
+
+
+def emoji_font():
+    """Something to draw emoji with: an emoji font on this machine, or the emoji folder."""
+    font = next((f for f in EMOJI_FONTS if Path(f).is_file()), None)
+    return font or (str(config.EMOJI_DIR) if _emoji_file("😭") else None)
+
+
+def _emoji_file(ch: str):
+    """This emoji's own picture from the emoji folder (PEAKCUT_EMOJI_DIR), named by its code points, like 1f62d.png."""
+    if not config.EMOJI_DIR:
+        return None
+    f = Path(config.EMOJI_DIR) / ("-".join(f"{ord(c):x}" for c in ch if c not in "\ufe0f\u200d") + ".png")
+    return f if f.is_file() else None
+
+
+def split_hook(hook: str):
+    """(the heading's words, its emoji: at most two, shown after the last word)"""
+    text = _EMOJI_EXTRA.sub("", hook or "")
+    return re.sub(r"\s{2,}", " ", EMOJI.sub("", text)).strip(), EMOJI.findall(text)[:2]
+
+
+def emoji_png(ch: str, path: Path, px: int) -> bool:
+    """One emoji as a see-through picture, px wide: from the emoji folder when it has this one, else drawn from the
+    emoji font. False when there is neither (the emoji is then left out)."""
+    own = _emoji_file(ch)
+    if own:
+        try:
+            from PIL import Image
+            im = Image.open(own).convert("RGBA")
+            box = im.getbbox()
+            im = im.crop(box) if box else im
+            side = max(im.size)
+            sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            sq.paste(im, ((side - im.width) // 2, (side - im.height) // 2))
+            sq.resize((px, px), Image.LANCZOS).save(path)
+            return True
+        except Exception:  # noqa: BLE001 - a broken picture: the font draws it instead
+            pass
+    font = next((f for f in EMOJI_FONTS if Path(f).is_file()), None)
+    if not font:
+        return False
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        im = Image.new("RGBA", (280, 280), (0, 0, 0, 0))
+        ImageDraw.Draw(im).text((70, 60), ch, font=ImageFont.truetype(font, 109), embedded_color=True)
+        box = im.getbbox()
+        if not box:
+            return False
+        im = im.crop(box)
+        side = max(im.size)
+        sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        sq.paste(im, ((side - im.width) // 2, (side - im.height) // 2))
+        sq.resize((px, px), Image.LANCZOS).save(path)
+        return True
+    except Exception:  # noqa: BLE001 - a clip without its emoji is better than no clip
+        return False
+
+
+def _split_lines(words, n, widest):
+    """The words on n lines, split where the widest line comes out narrowest."""
+    best = [None, None]
+
+    def go(start, left, acc):
+        if left == 1:
+            lines = acc + [" ".join(words[start:])]
+            w = widest(lines)
+            if best[0] is None or w < best[0]:
+                best[0], best[1] = w, lines
+            return
+        for cut in range(start + 1, len(words) - left + 2):
+            go(cut, left - 1, acc + [" ".join(words[start:cut])])
+    go(0, n, [])
+    return best[1]
 
 
 CAPTION_LEAD = 0.0  # measured: word stamps are within 0.15 s of the voice, so no shift is needed
@@ -170,20 +254,49 @@ def geometry(src_w, src_h, layout, face=None):
     return layout, fg_h, max(230, top - 190), min(1640, top + fg_h + 180)
 
 
-def _hook_events(hook, dur, y, card=True):
-    """The heading: dark text in a white rounded box that fits it, on one line or two balanced ones."""
-    f, size = _Font.get(HOOK["font"]), HOOK["size"]
-    words = hook.split()
-    if not words:
+def hook_scale(font) -> float:
+    """How much bigger or smaller a font is drawn in the heading so its capital letters stand as tall as the classic one."""
+    base, f = _Font.get(HOOK["font"]), _Font.get(font)
+    return (base.cap / (base.asc + base.desc)) / (f.cap / (f.asc + f.desc))
+
+
+def _hook_events(hook, dur, y, info=None, look=None):
+    """The heading: dark text in a white rounded box that fits it, on one or two balanced lines (never more: a longer
+    heading is made smaller instead), with its emoji
+    after the last word. `info` (when given) receives where each emoji goes and where the box ends.
+    `look`: a style's heading (font, text colour, box on or off and its colour); without it, the classic white box."""
+    if look:
+        font, ink, boxc, boxed = look["font"], _bgr(look["color"]), _bgr(look["bgc"]), look["bg"]
+    else:
+        font, ink, boxc, boxed = HOOK["font"], HOOK["ink"], HOOK["box"], True
+    f, size = _Font.get(font), int(round((look.get("size", HOOK["size"]) if look else HOOK["size"]) * hook_scale(font)))
+    text, emoji = split_hook(hook)
+    if look and look.get("upper"):
+        text = text.upper()
+    if info is None or not emoji_font():
+        emoji = []
+    words = text.split()
+    if not words and not emoji:
         return []
+    gap = lambda sz: sz * 0.16                                                       # noqa: E731
+    e_w = lambda sz: f.em(sz) * 1.02                                                 # noqa: E731
+    extra = lambda sz: len(emoji) * (e_w(sz) + gap(sz))                              # noqa: E731
+
+    def widths(lines, sz):
+        ws = [f.width(l, sz) for l in lines]
+        ws[-1] += extra(sz)
+        return ws
     lines = [" ".join(words)]
-    if f.width(lines[0], size) > HOOK["max_w"] and len(words) > 1:      # two lines, split where they come out most even
-        cut = min(range(1, len(words)), key=lambda i: max(f.width(" ".join(words[:i]), size), f.width(" ".join(words[i:]), size)))
-        lines = [" ".join(words[:cut]), " ".join(words[cut:])]
-    widest = max(f.width(l, size) for l in lines)
+    for n in (1, 2):                    # one line, or two; past that the text is made smaller, never a third line
+        if n > max(1, len(words)):
+            break
+        lines = _split_lines(words, n, lambda ls: max(widths(ls, size))) if words else [""]
+        if max(widths(lines, size)) <= HOOK["max_w"]:
+            break
+    widest = max(widths(lines, size))
     if widest > HOOK["max_w"]:
         size = max(40, int(size * HOOK["max_w"] / widest))
-        widest = max(f.width(l, size) for l in lines)
+        widest = max(widths(lines, size))
     line_h = f.em(size) * 1.16
     bw, bh = widest + 2 * HOOK["pad_x"], line_h * len(lines) + 2 * HOOK["pad_y"]
     x0, y0, r = (W - bw) / 2, y - bh / 2, min(HOOK["radius"], bh / 2)
@@ -194,21 +307,72 @@ def _hook_events(hook, dur, y, card=True):
            f"l {n(x0 + r)} {n(y1)} b {n(x0)} {n(y1)} {n(x0)} {n(y1)} {n(x0)} {n(y1 - r)} "
            f"l {n(x0)} {n(y0 + r)} b {n(x0)} {n(y0)} {n(x0)} {n(y0)} {n(x0 + r)} {n(y0)}")
     span = f"{_ts(0)},{_ts(dur)}"
-    ev = [f"Dialogue: 3,{span},Hook,,0,0,0,,{{\\an7\\pos(0,0)\\fad(160,0)\\c&H{HOOK['box']}&\\p1}}{box}{{\\p0}}"]
-    if not card:
-        ev = []
+    ev = [f"Dialogue: 3,{span},Hook,,0,0,0,,{{\\an7\\pos(0,0)\\fad(160,0)\\c&H{boxc}&\\p1}}{box}{{\\p0}}"] if boxed else []
+    edge = look.get("outline", 0 if boxed else 6) if look else 0          # a black edge round the letters
+    txt = (f"\\fn{font}\\c&H{ink}&" + (f"\\bord{edge}\\3c&H000000&" if edge else "")) if look else ""
     for i, line in enumerate(lines):
-        cy = y - line_h * (len(lines) - 1) / 2 + i * line_h - f.cap_shift(size)
-        treatment = "" if card else "\\c&HFFFFFF&\\bord6\\shad2"
-        if not card and i == 0:
-            first, _, rest = line.partition(" ")
-            line = "{\\c&H00D4FF&}" + first + "{\\c&HFFFFFF&}" + (" " + rest if rest else "")
-        ev.append(f"Dialogue: 4,{span},Hook,,0,0,0,,{{{treatment}\\an5\\pos({W // 2},{cy:.0f})\\fad(160,0)\\fs{size}}}{line}")
+        mid = y - line_h * (len(lines) - 1) / 2 + i * line_h
+        cx = W / 2
+        if emoji and i == len(lines) - 1:           # the last line is its words and the emoji together, centred as one
+            tw = f.width(line, size)
+            cx = W / 2 - extra(size) / 2
+            x = W / 2 - (tw + extra(size)) / 2 + tw + gap(size)
+            for ch in emoji:
+                info["emoji"].append({"ch": ch, "x": int(round(x)), "y": int(round(mid - e_w(size) / 2)), "size": int(round(e_w(size)))})
+                x += e_w(size) + gap(size)
+        if line:
+            ev.append(f"Dialogue: 4,{span},Hook,,0,0,0,,{{\\an5\\pos({cx:.0f},{mid - f.cap_shift(size):.0f})\\fad(160,0)\\fs{size}{txt}}}{line}")
+    if info is not None:
+        info["bottom"] = y1
     return ev
 
 
-def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, hook_card=True) -> str:
-    st = STYLES.get(style_name, STYLES["bounce"])
+def _bgr(rgb):
+    return rgb[4:6] + rgb[2:4] + rgb[0:2]
+
+
+def _cap_style(cap):
+    """A template's caption settings (or an old style name) as what the caption drawing below needs."""
+    if not isinstance(cap, dict):
+        cap = templates.legacy(cap if cap in STYLES else "bounce")["cap"]
+    cap = templates.clean_look({"cap": cap})["cap"]
+    if cap.get("legacy_style") in STYLES:
+        return dict(STYLES[cap["legacy_style"]], legacy_motion=True, anim="pop", shadow=0, bg=False)
+    size = cap["size"]
+    pop = cap["pop"] if cap["anim"] == "pop" else 100
+    return {"font": cap["font"], "size": size, "base": _bgr(cap["color"]), "active": _bgr(cap["hi"]),
+            "strong": _bgr(cap["key"]), "outline": cap["outline"], "shadow": 4 if cap["shadow"] else 0,
+            "pop": pop, "upper": cap["upper"], "per": cap["per"], "anim": cap["anim"], "bg": cap["bg"], "bgc": _bgr(cap["bgc"])}
+
+
+def _round_box(x0, y0, x1, y1, r):
+    n = lambda v: f"{v:.0f}"                                                         # noqa: E731
+    return (f"m {n(x0 + r)} {n(y0)} l {n(x1 - r)} {n(y0)} b {n(x1)} {n(y0)} {n(x1)} {n(y0)} {n(x1)} {n(y0 + r)} "
+            f"l {n(x1)} {n(y1 - r)} b {n(x1)} {n(y1)} {n(x1)} {n(y1)} {n(x1 - r)} {n(y1)} "
+            f"l {n(x0 + r)} {n(y1)} b {n(x0)} {n(y1)} {n(x0)} {n(y1)} {n(x0)} {n(y1 - r)} "
+            f"l {n(x0)} {n(y0 + r)} b {n(x0)} {n(y0)} {n(x0)} {n(y0)} {n(x0 + r)} {n(y0)}")
+
+
+_SCRIPT_RANGES = {"ur": re.compile(r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]"), "hi": re.compile(r"[\u0900-\u097F]")}
+
+
+def _in_script(text, script) -> bool:
+    """Is this text written (mostly) in the given script's own letters (Urdu or Devanagari)?"""
+    rx, letters = _SCRIPT_RANGES.get(script), [c for c in str(text or "") if c.isalpha()]
+    return bool(rx and letters and sum(1 for c in letters if rx.match(c)) >= len(letters) / 2)
+
+
+def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, note="", info=None, show_hook=True, hook_look=None,
+              script="") -> str:
+    """style_name: a template's caption settings (dict), or one of the old style names. script: "ur" or "hi" when the
+    captions are in Urdu or Hindi script."""
+    st = _cap_style(style_name)
+    if script in SCRIPT_FONTS:
+        name, _f, grow = SCRIPT_FONTS[script]
+        st.update(font=name, size=int(st["size"] * grow), upper=False)
+        # the heading keeps its own font and design: the script's font only when the heading itself is written in it
+        if _in_script(hook, script):
+            hook_look = dict(hook_look or templates.clean_look({})["hook"], font=name, upper=False)
     words = [dict(w, s=w["s"] - CAPTION_LEAD, e=w["e"] - CAPTION_LEAD) for w in words]
     strong = {_key(h) for h in highlight if _key(h)}
     head = f"""[Script Info]
@@ -220,20 +384,59 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{st['font']},{st['size']},&H00{st['base']},&H00{st['base']},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{st['outline']},0,5,0,0,0,1
+Style: Cap,{st['font']},{st['size']},&H00{st['base']},&H00{st['base']},&H00000000,&H70000000,0,0,0,0,100,100,0,0,1,{st['outline']},{st['shadow']},5,0,0,0,1
 Style: Hook,{HOOK['font']},{HOOK['size']},&H00{HOOK['ink']},&H00{HOOK['ink']},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: Note,{HOOK['font']},46,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,4,0,5,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     dur = end - start
-    ev = _hook_events(_clean(hook), dur, hook_y, card=hook_card)
+    ev = _hook_events(_clean(hook), dur, hook_y, info, hook_look) if show_hook else []
+    note = _clean(note)[:60]
+    if note:                            # the campaign's fixed line (a tag, a link), small, just under the heading
+        nf, ns = _Font.get(HOOK["font"]), 46
+        if nf.width(note, ns) > 940:
+            ns = max(26, int(ns * 940 / nf.width(note, ns)))
+        ny = ((info or {}).get("bottom") or hook_y) + 50
+        ev.append(f"Dialogue: 4,{_ts(0)},{_ts(dur)},Note,,0,0,0,,{{\\an5\\pos({W // 2},{ny:.0f})\\fs{ns}}}{note}")
     f = _Font.get(st["font"])
     inside = [dict(w, w=_clean(w["w"])) for w in words if w["s"] >= start - 0.05 and w["s"] < end]
     inside = sorted((w for w in inside if w["w"]), key=lambda w: w["s"])
     for i, w in enumerate(inside[:-1]):
         w["e"] = max(w["s"], min(w["e"], inside[i + 1]["s"]))
     groups = _groups(inside, st["per"])
+    if script in SCRIPT_FONTS:                           # a whole line at a time: the word being said in its colour
+        for gi, g in enumerate(groups):
+            g_start = max(0.0, g[0]["s"] - start)
+            g_end = min(g[-1]["e"] + 0.25, groups[gi + 1][0]["s"] if gi + 1 < len(groups) else end) - start
+            if g_end - g_start < 0.02:
+                continue
+            texts = [re.sub(r"[.,;:]+$", "", x["w"]) for x in g]
+            size = st["size"]
+            wide = f.width(" ".join(texts), size)
+            if wide > CAP_MAX_W:
+                size = max(36, int(size * CAP_MAX_W / wide))
+            pos = f"\\an5\\pos({W // 2},{cap_y - f.cap_shift(size):.0f})\\fs{size}"
+            base = [st["strong"] if _key(x["w"]) in strong else st["base"] for x in g]
+
+            def line(on):
+                parts = []
+                for i, t in enumerate(texts):
+                    lit = st["anim"] != "none" and (i == on or (st["anim"] == "fill" and 0 <= i < on))
+                    parts.append(f"{{\\c&H{st['active'] if lit else base[i]}&}}{t}")
+                return " ".join(parts)
+            marks = [max(g_start, x["s"] - start) for x in g] + [g_end]
+            if st["anim"] == "none":
+                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}}}{line(-1)}")
+                continue
+            if marks[0] - g_start >= 0.02:
+                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(marks[0])},Cap,,0,0,0,,{{{pos}}}{line(-1)}")
+            for i in range(len(g)):
+                a, b = marks[i], marks[i + 1]
+                if b - a >= 0.02:
+                    ev.append(f"Dialogue: 1,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{pos}}}{line(i)}")
+        return head + "\n".join(ev) + "\n"
     for gi, g in enumerate(groups):
         g_start = max(0.0, g[0]["s"] - start)
         g_end = min(g[-1]["e"] + 0.25, groups[gi + 1][0]["s"] if gi + 1 < len(groups) else end) - start
@@ -251,74 +454,119 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(g_end)},Cap,,60,60,0,,{{\\an5\\pos({W // 2},{cap_y:.0f})\\q0\\fs{fs}}}{line}")
             continue
         size = st["size"]
-        gap = f.width("n n", size) - 2 * f.width("n", size) + (2 * st["outline"] + 6) * size / st["size"]   # a space, plus room for both outlines
+        gap = f.width("n n", size) - 2 * f.width("n", size) + (2 * st["outline"] + 6) * size / st["size"] + (size * 0.2 if st["anim"] == "box" else 0)   # a space, plus room for both outlines
         total = sum(f.width(t, size) for t in texts) + gap * (len(texts) - 1)
         if total > CAP_MAX_W:                                  # a long phrase: shrink it to fit, never run off the frame
             size = max(36, int(size * CAP_MAX_W / total))
-            gap = f.width("n n", size) - 2 * f.width("n", size) + (2 * st["outline"] + 6) * size / st["size"]   # a space, plus room for both outlines
+            gap = f.width("n n", size) - 2 * f.width("n", size) + (2 * st["outline"] + 6) * size / st["size"] + (size * 0.2 if st["anim"] == "box" else 0)   # a space, plus room for both outlines
             total = sum(f.width(t, size) for t in texts) + gap * (len(texts) - 1)
         cy = cap_y - f.cap_shift(size)
         x = (W - total) / 2
-        motion = st.get("motion") or "pop"
-        # A keyword style keeps every ordinary word white. Only a word the clip marked
-        # as a highlight takes the accent, whether or not it is the one being said.
-        def paint(word, speaking):
-            if st.get("only_highlight"):
-                return st["active"] if _key(word) in strong else st["base"]
-            if speaking:
-                return st["active"]
-            return st["strong"] if _key(word) in strong else st["base"]
+        if st.get("legacy_motion"):
+            motion = st.get("motion") or "pop"
+            # A keyword style keeps every ordinary word white. Only a word the clip marked
+            # as a highlight takes the accent, whether or not it is the one being said.
+            def paint(word, speaking):
+                if st.get("only_highlight"):
+                    return st["active"] if _key(word) in strong else st["base"]
+                if speaking:
+                    return st["active"]
+                return st["strong"] if _key(word) in strong else st["base"]
 
-        def edge():
-            """A bright outline, for a glow. Other motions keep the outline from the style line."""
-            if motion != "glow":
-                return ""
-            return f"\\bord{st['outline']}\\3c&H{st.get('edge') or '000000'}&"
+            def edge():
+                """A bright outline, for a glow. Other motions keep the outline from the style line."""
+                if motion != "glow":
+                    return ""
+                return f"\\bord{st['outline']}\\3c&H{st.get('edge') or '000000'}&"
 
+            for i, (w, t) in enumerate(zip(g, texts)):
+                wd = f.width(t, size)
+                p = max(104, min(st["pop"], 100 + int(2200 / max(wd, 1))))   # long words grow less, so they never touch their neighbours
+                cx = x + wd / 2
+                pos = f"\\an5\\pos({cx:.0f},{cy:.0f})\\fs{size}"
+                x += wd + gap
+                a = max(g_start, w["s"] - start)
+                b = (g[i + 1]["s"] - start) if i + 1 < len(g) else g_end
+                rest = paint(w["w"], False)
+                live = paint(w["w"], True)
+                # Type and rise hide the word until it is said, so it is not already sitting there.
+                show_early = motion not in ("type", "rise")
+                if show_early and a - g_start >= 0.02:                            # waiting to be said
+                    ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(a)},Cap,,0,0,0,,{{{pos}{edge()}\\c&H{rest}&}}{t}")
+                if b - a >= 0.02:
+                    if motion == "pop":
+                        look = (f"{pos}\\c&H{live}&\\fscx94\\fscy94"
+                                f"\\t(0,90,\\fscx{p}\\fscy{p})\\t(90,200,\\fscx{p - 5}\\fscy{p - 5})")
+                    elif motion == "rise":
+                        ms = min(160, max(40, int((b - a) * 1000)))
+                        look = f"\\an5\\move({cx:.0f},{cy + 52:.0f},{cx:.0f},{cy:.0f},0,{ms})\\fs{size}\\c&H{live}&"
+                    elif motion == "type":
+                        left, right = cx - wd / 2, cx + wd / 2
+                        top, bot = cy - size, cy + size * 0.45
+                        ms = max(60, int((b - a) * 1000))
+                        look = (f"{pos}\\c&H{live}&\\clip({left:.0f},{top:.0f},{left:.0f},{bot:.0f})"
+                                f"\\t(0,{ms},\\clip({left:.0f},{top:.0f},{right:.0f},{bot:.0f}))")
+                    else:
+                        look = f"{pos}{edge()}\\c&H{live}&"
+                    ev.append(f"Dialogue: 2,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{look}}}{t}")
+                if g_end - b >= 0.02:
+                    extra = ""
+                    if motion == "pop":
+                        extra = f"\\fscx{p - 5}\\fscy{p - 5}\\t(0,90,\\fscx100\\fscy100)"
+                    ev.append(f"Dialogue: 1,{_ts(b)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}{edge()}\\c&H{rest}&{extra}}}{t}")
+                if motion == "glow" and st.get("glow"):
+                    # The soft copy sits behind the word for as long as the word itself is on screen.
+                    frm = g_start if show_early else a
+                    ev.append(f"Dialogue: 0,{_ts(frm)},{_ts(g_end)},Cap,,0,0,0,,"
+                              f"{{{pos}\\blur{int(st['glow'])}\\bord0\\c&H{st.get('glow_colour') or live}&}}{t}")
+            continue
+        if st["bg"]:                                       # a rounded box behind the whole line
+            ch = f.cap * size / (f.asc + f.desc)
+            px, py = size * 0.28, ch * 0.55
+            box = _round_box(x - px, cap_y - ch / 2 - py, x + total + px, cap_y + ch / 2 + py, min(size * 0.22, ch))
+            ev.append(f"Dialogue: 0,{_ts(g_start)},{_ts(g_end)},Cap,,0,0,0,,{{\\an7\\pos(0,0)\\bord0\\shad0\\c&H{st['bgc']}&\\p1}}{box}{{\\p0}}")
+        p = st["pop"]
         for i, (w, t) in enumerate(zip(g, texts)):
             wd = f.width(t, size)
-            p = max(104, min(st["pop"], 100 + int(2200 / max(wd, 1))))   # long words grow less, so they never touch their neighbours
-            cx = x + wd / 2
-            pos = f"\\an5\\pos({cx:.0f},{cy:.0f})\\fs{size}"
+            p = max(104, min(st["pop"], 100 + int(2200 / max(wd, 1)))) if st["pop"] > 100 else 100   # long words grow less, so they never touch their neighbours
+            pos = f"\\an5\\pos({x + wd / 2:.0f},{cy:.0f})\\fs{size}"
             x += wd + gap
             a = max(g_start, w["s"] - start)
             b = (g[i + 1]["s"] - start) if i + 1 < len(g) else g_end
-            rest = paint(w["w"], False)
-            live = paint(w["w"], True)
-            # Type and rise hide the word until it is said, so it is not already sitting there.
-            show_early = motion not in ("type", "rise")
-            if show_early and a - g_start >= 0.02:                            # waiting to be said
-                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(a)},Cap,,0,0,0,,{{{pos}{edge()}\\c&H{rest}&}}{t}")
-            if b - a >= 0.02:
-                if motion == "pop":
-                    look = (f"{pos}\\c&H{live}&\\fscx94\\fscy94"
-                            f"\\t(0,90,\\fscx{p}\\fscy{p})\\t(90,200,\\fscx{p - 5}\\fscy{p - 5})")
-                elif motion == "rise":
-                    ms = min(160, max(40, int((b - a) * 1000)))
-                    look = f"\\an5\\move({cx:.0f},{cy + 52:.0f},{cx:.0f},{cy:.0f},0,{ms})\\fs{size}\\c&H{live}&"
-                elif motion == "type":
-                    left, right = cx - wd / 2, cx + wd / 2
-                    top, bot = cy - size, cy + size * 0.45
-                    ms = max(60, int((b - a) * 1000))
-                    look = (f"{pos}\\c&H{live}&\\clip({left:.0f},{top:.0f},{left:.0f},{bot:.0f})"
-                            f"\\t(0,{ms},\\clip({left:.0f},{top:.0f},{right:.0f},{bot:.0f}))")
+            base = st["strong"] if _key(w["w"]) in strong else st["base"]
+            anim = st["anim"]
+            if anim == "none":                                                        # plain: the words just sit there
+                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}\\c&H{base}&}}{t}")
+                continue
+            if a - g_start >= 0.02:                                                   # waiting to be said
+                ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(a)},Cap,,0,0,0,,{{{pos}\\c&H{base}&}}{t}")
+            if b - a >= 0.02:                                                         # being said
+                if anim == "pop":                                                     # its colour and a quick pop, in front
+                    ev.append(f"Dialogue: 2,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{pos}\\c&H{st['active']}&\\fscx94\\fscy94"
+                              f"\\t(0,90,\\fscx{p}\\fscy{p})\\t(90,200,\\fscx{p - 5}\\fscy{p - 5})}}{t}")
+                elif anim == "box":                                                   # in a rounded box of its colour
+                    cx, mid = x - gap - wd / 2, cap_y
+                    ch = f.cap * size / (f.asc + f.desc)
+                    px, py = size * 0.16, ch * 0.42
+                    box = _round_box(cx - wd / 2 - px, mid - ch / 2 - py, cx + wd / 2 + px, mid + ch / 2 + py, min(size * 0.16, ch))
+                    ev.append(f"Dialogue: 0,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{\\an7\\pos(0,0)\\bord0\\shad0\\c&H{st['active']}&\\p1}}{box}{{\\p0}}")
+                    ev.append(f"Dialogue: 2,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{pos}\\bord0\\shad0\\c&H{base}&}}{t}")
+                else:                                                                 # fill: said words keep the colour
+                    ev.append(f"Dialogue: 2,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{pos}\\c&H{st['active']}&}}{t}")
+            if g_end - b >= 0.02:                                                     # said
+                if anim == "pop":
+                    ev.append(f"Dialogue: 1,{_ts(b)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}\\c&H{base}&\\fscx{p - 5}\\fscy{p - 5}"
+                              f"\\t(0,90,\\fscx100\\fscy100)}}{t}")
                 else:
-                    look = f"{pos}{edge()}\\c&H{live}&"
-                ev.append(f"Dialogue: 2,{_ts(a)},{_ts(b)},Cap,,0,0,0,,{{{look}}}{t}")
-            if g_end - b >= 0.02:
-                extra = ""
-                if motion == "pop":
-                    extra = f"\\fscx{p - 5}\\fscy{p - 5}\\t(0,90,\\fscx100\\fscy100)"
-                ev.append(f"Dialogue: 1,{_ts(b)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}{edge()}\\c&H{rest}&{extra}}}{t}")
-            if motion == "glow" and st.get("glow"):
-                # The soft copy sits behind the word for as long as the word itself is on screen.
-                frm = g_start if show_early else a
-                ev.append(f"Dialogue: 0,{_ts(frm)},{_ts(g_end)},Cap,,0,0,0,,"
-                          f"{{{pos}\\blur{int(st['glow'])}\\bord0\\c&H{st.get('glow_colour') or live}&}}{t}")
+                    ev.append(f"Dialogue: 1,{_ts(b)},{_ts(g_end)},Cap,,0,0,0,,{{{pos}\\c&H{st['active'] if anim == 'fill' else base}&}}{t}")
     return head + "\n".join(ev) + "\n"
 
 
 PIP_W = 380            # how wide the facecam is in the 1080-wide frame
+PIP_MARGIN = 26
+
+
+PIP_W = 380            # how wide the facecam is in the 1080-wide frame (the gameplay layout)
 PIP_MARGIN = 26
 
 
@@ -371,33 +619,170 @@ def _hook_y(layout, hook_y, facecam=None):
     return hook_y
 
 
+def _even(v):
+    return max(2, int(round(v / 2)) * 2)
+
+
+def cam_plan(dst, src_box, src_w, src_h):
+    """Where the streamer's cam comes from (src_box: shares of the source frame) and where it goes (dst: a style's
+    box, shares of the 9:16 frame, 0-100). None without both. A cam the full width of the frame at its top or
+    bottom is stacked: the game fills the rest of the frame instead of sitting behind it."""
+    if not dst or not src_box:
+        return None
+    bx, by, bw, bh = (_even(W * dst["x"] / 100) if dst["x"] else 0), (_even(H * dst["y"] / 100) if dst["y"] else 0), _even(W * dst["w"] / 100), _even(H * dst["h"] / 100)
+    bw, bh = min(bw, W - bx), min(bh, H - by)
+    stack = bw >= W - 4 and (by <= 4 or by + bh >= H - 4)
+    if stack:
+        bx, bw = 0, W
+        by = 0 if by <= 4 else H - bh
+    sx, sy = _even(src_w * src_box["x"]) if src_box["x"] else 0, _even(src_h * src_box["y"]) if src_box["y"] else 0
+    sw, sh = min(_even(src_w * src_box["w"]), src_w - sx), min(_even(src_h * src_box["h"]), src_h - sy)
+    return {"bx": bx, "by": by, "bw": bw, "bh": bh, "sx": sx, "sy": sy, "sw": sw, "sh": sh, "stack": stack,
+            "seam": by + bh if by == 0 else by}
+
+
+QUALITIES = (1080, 1440, 2160)
+SLACK = 1.4          # how much a part may be enlarged and still look sharp
+
+
+def needed_height(look, cam_src=None, aspect=16 / 9) -> int:
+    """The video quality (its height) a style needs so nothing in its clips is blown up more than SLACK: 1080 for a
+    full frame, more when the style zooms in (Fill the screen, Zoomed in, a part of the video, the streamer's cam).
+    The highest the video has is fetched, up to this."""
+    look = templates.clean_look(look) if isinstance(look, dict) else templates.legacy()
+    gs = look.get("game_src") or {"x": 0, "y": 0, "w": 1.0, "h": 1.0}
+    cam = cam_plan(look.get("cam"), cam_src or {"x": 0, "y": 0, "w": 0.22, "h": 0.22}, 1920, 1080) if look.get("cam") else None
+
+    def want(rw, rh, dw, dh):        # the source height at which this part (shares rw x rh) fills dw x dh sharply
+        return max(dw / (rw * aspect), dh / rh) / SLACK
+    if cam and cam["stack"]:
+        dw, dh = W, H - cam["bh"]
+    elif look["layout"] in _FILLS:
+        dw, dh = W, H
+    elif look["layout"] == "zoom":
+        dw, dh = W, 1000
+    elif look["layout"] == "split":          # each half of the video fills half the frame
+        dw, dh = W * 2, H / 2
+    else:                            # the blurred fill: the whole width, as tall as the part is
+        dw, dh = W, W * gs["h"] / (gs["w"] * aspect)
+    need = want(gs["w"], gs["h"], dw, dh)
+    if cam:
+        box = cam_src or {"w": 0.22, "h": 0.22}
+        need = max(need, want(box["w"], box["h"], cam["bw"], cam["bh"]))
+    return next((q for q in QUALITIES if q >= need), QUALITIES[-1])
+
+
+def cam_frame(cam, look_style, out_dir: Path, name: str) -> dict:
+    """The pictures that give the cam its rounded corners and border, made for this box: {"mask": the shape (white
+    where the cam shows), "border": the outline on a clear background}; empty when the style has neither."""
+    st = look_style or {}
+    r, bw, out = int(st.get("r") or 0), int(st.get("bw") or 0), {}
+    if not (r or bw):
+        return out
+    from PIL import Image, ImageDraw
+    w, h = cam["bw"], cam["bh"]
+    r = int(min(w, h) * min(r, 50) / 100)            # % of the shorter side: 50 is fully round (a circle in a square box)
+    k = 3                                                  # drawn 3x larger and shrunk: smooth curved edges
+    if r:
+        m = Image.new("L", (w * k, h * k), 0)
+        ImageDraw.Draw(m).rounded_rectangle((0, 0, w * k - 1, h * k - 1), radius=r * k, fill=255)
+        out["mask"] = out_dir / f"{name}.cammask.png"
+        m.resize((w, h), Image.LANCZOS).save(out["mask"])
+    if bw:
+        rgb = tuple(int(str(st.get("bc") or "FFFFFF")[i:i + 2], 16) for i in (0, 2, 4))
+        b = Image.new("RGBA", (w * k, h * k), (0, 0, 0, 0))
+        half = bw * k / 2
+        ImageDraw.Draw(b).rounded_rectangle((half, half, w * k - 1 - half, h * k - 1 - half), radius=max(0, (r - bw / 2)) * k,
+                                            outline=rgb + (255,), width=bw * k)
+        out["border"] = out_dir / f"{name}.camborder.png"
+        b.resize((w, h), Image.LANCZOS).save(out["border"])
+    return out
+
+
+def cam_filter(cam, layout, fg_h, crop="", frame=None):
+    """The video with the streamer's cam: the game as the layout has it (or filling the rest of the frame when the
+    cam is stacked), and the cam cut from the source, filling its box. `frame`: {"mask": input index, "border":
+    input index} of the pictures that round its corners and draw its border."""
+    frame = frame or {}
+    fps = config.OUT_FPS
+    if cam["stack"]:
+        gy, gh = (cam["bh"], H - cam["bh"]) if cam["by"] == 0 else (0, cam["by"])
+        game = (f"[s0]{crop}fps={fps},format=yuv420p,scale={W}:{gh}:force_original_aspect_ratio=increase,crop={W}:{gh},"
+                f"pad={W}:{H}:0:{gy}:black,setsar=1[vg];")
+    else:
+        game = _filter(layout, fg_h).replace("[0:v]", "[s0]" + crop, 1).replace("[v0];", "[vg];")
+    return ("[0:v]split=2[s0][s1];" + game +
+            f"[s1]fps={fps},format=yuv420p,crop={cam['sw']}:{cam['sh']}:{cam['sx']}:{cam['sy']},"
+            f"scale={cam['bw']}:{cam['bh']}:force_original_aspect_ratio=increase,crop={cam['bw']}:{cam['bh']},setsar=1"
+            + (f",format=rgba[cr];[{frame['mask']}:v]format=gray,scale={cam['bw']}:{cam['bh']}[cmk];[cr][cmk]alphamerge[cm];"
+               if "mask" in frame else "[cm];")
+            + (f"[vg][cm]overlay={cam['bx']}:{cam['by']}:shortest=1[vc];[vc][{frame['border']}:v]overlay={cam['bx']}:{cam['by']}:shortest=1[v0];"
+               if "border" in frame else f"[vg][cm]overlay={cam['bx']}:{cam['by']}:shortest=1[v0];"))
+
+
+LOGO_BOX = {"s": (220, 70), "m": (320, 100), "l": (420, 130)}          # the most room a logo gets, by size
+LOGO_AT = {"tl": "44:56", "tc": "(W-w)/2:56", "tr": "W-w-44:56", "bl": "44:H-h-300", "bc": "(W-w)/2:H-h-300", "br": "W-w-44:H-h-300"}
+LOGO_STILL, LOGO_MOVING = (".png", ".jpg", ".jpeg", ".webp"), (".gif", ".mp4", ".mov", ".webm")
+
+
+def _logo(logo, n):
+    """ffmpeg inputs and the filter that scales this logo for input n. A full-frame one (a 1080x1920 template with the
+    logo already in place) covers the whole clip; any other sits in a corner, clear of the heading and the captions."""
+    path = Path(logo["path"])
+    ext = path.suffix.lower()
+    args = ["-ignore_loop", "0"] if ext == ".gif" else ["-stream_loop", "-1"] if ext in LOGO_MOVING else ["-loop", "1"]
+    if logo.get("pos") == "full":
+        return args + ["-i", str(path)], f"[{n}:v]scale={W}:{H},format=rgba[lg]", "0:0"
+    bw, bh = LOGO_BOX.get(logo.get("size"), LOGO_BOX["m"])
+    return (args + ["-i", str(path)], f"[{n}:v]scale=w={bw}:h={bh}:force_original_aspect_ratio=decrease,format=rgba[lg]",
+            LOGO_AT.get(logo.get("pos"), LOGO_AT["tl"]))
+
+
 _qsv_ok = None
 RENDER_SECONDS = 600      # one clip's video encode; far beyond normal, so a frozen encoder is stopped, not waited on
 
 
-def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, src_w: int, src_h: int) -> dict:
-    """Writes <name>.mp4, <name>.jpg and <name>.ass into out_dir. Returns file names."""
+def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, src_w: int, src_h: int, extras: dict = None) -> dict:
+    """Writes <name>.mp4, <name>.jpg and <name>.ass into out_dir. Returns file names.
+    extras: what the creator's campaign puts on every clip: {"logo": {"path", "pos", "size"}, "note": "a fixed line",
+    "cam": where the streamer's cam was found in the source (shares of its frame)}."""
+    extras = extras or {}
     out_dir.mkdir(parents=True, exist_ok=True)
     start, end = clip["start"], clip["end"]
-    layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, clip.get("layout", "blur"))
-    face = clip.get("facecam")
-    requested = clip.get("layout", "blur")
+    look = templates.clean_look(clip["look"]) if isinstance(clip.get("look"), dict) else templates.legacy(clip.get("style", "bounce"), clip.get("layout", "blur"))
+    gs, crop = look.get("game_src"), ""
+    if gs:                                # only this part of the video is shown (a zoomed-in stream, say)
+        gx, gy = _even(src_w * gs["x"]) if gs["x"] else 0, _even(src_h * gs["y"]) if gs["y"] else 0
+        gw, gh = min(_even(src_w * gs["w"]), src_w - gx), min(_even(src_h * gs["h"]), src_h - gy)
+        crop = f"crop={gw}:{gh}:{gx}:{gy},"
+    layout, fg_h, hook_y, cap_y = geometry(gw if gs else src_w, gh if gs else src_h, look["layout"])
+    cam = cam_plan(look.get("cam"), look.get("cam_src") or extras.get("cam"), src_w, src_h)   # drawn on the style, else found
+    # The gameplay layout: the webcam (found in pixels of the source, clip["facecam"]) in the top corner of the game,
+    # and the heading just below it. With a style's own cam box, that box is used instead.
+    face = clip.get("facecam") if layout == "gameplay" and not cam and not gs else None
+    requested = layout
     if layout == "stacked":
         face = stacked.detect(src, start, end)
+        cam, crop = None, ""
         layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, "stacked" if face else "blur", face)
     if layout == "gameplay" and not (face and len(face) == 4):
-        layout = "crop"     # no webcam found: the game fills the screen, which is still the right shape
+        layout, face = "crop", None       # no webcam found: the game fills the screen, which is still the right shape
     hook_y = _hook_y(layout, hook_y, face)
-    hook = clip.get("hook", "")
-    if layout == "stacked" and _clean(hook):
-        # Leave room for the two-line hook card and the largest animated caption.
+    if cam and cam["stack"]:              # cam above or below the game: captions on the line between, heading in the game
+        cap_y = cam["seam"]
+        hook_y = H - 380 if cam["by"] == 0 else 300
+    if layout == "stacked" and _clean(clip.get("hook", "")):
         cap_y = FACE_H + 220
-    # Colour emoji are raster artwork, so neither libass nor a machine's font
-    # fallback can turn them into missing-glyph boxes. Stacked titles use the
-    # same artwork path for their full-width brushed divider.
-    image_hook = bool(_clean(hook)) and (layout == "stacked" or hook_art.has_emoji(_clean(hook)))
-    ass = build_ass(words if clip.get("captions", True) else [], start, end, "" if image_hook else hook, clip.get("style", "bounce"),
-                    clip.get("highlight_words", []), hook_y, cap_y)
+    if look["cap"]["y"] is not None:                     # the template puts the captions somewhere of its own
+        cap_y = int(H * look["cap"]["y"] / 100)
+    if look["hook"]["y"] is not None:
+        hook_y = int(H * look["hook"]["y"] / 100)
+    info = {"emoji": []}
+    show_caps = look["cap"]["show"] and clip.get("captions", True) is not False     # the style, and the captions switch
+    image_hook = layout == "stacked" and look["hook"]["show"] and _clean(clip.get("hook", ""))
+    ass = build_ass(words if show_caps else [], start, end, "" if image_hook else clip.get("hook", ""), look["cap"], clip.get("highlight_words", []),
+                    hook_y, cap_y, note=extras.get("note", ""), info=info, show_hook=look["hook"]["show"],
+                    hook_look=look["hook"], script=clip.get("script") or "")
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
     # open files whose full path is longer than 260 characters on Windows, which a data folder deep inside other
     # folders easily reaches. Inside the work folder every name is short and relative (a drive colon would also
@@ -406,34 +791,54 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     try:
         # The title and description are also written into the file itself, for any place that reads them from it.
         meta = {"title": clip.get("title") or "", "description": clip.get("description") or "", "comment": clip.get("description") or ""}
-        graph = _filter(layout, fg_h, face) + "[v0]"
-        if requested == "stacked":
-            graph += f"drawbox=x=0:y=0:w=iw:h=ih:color={FRAME_COLOR}:t={FRAME_PX},"
         if image_hook:
-            hook_art.make(_clean(hook), W, brush=layout == "stacked").save(work / "hook.png")
-        result = _render_in(work, src, out_dir, name, start, end, layout, graph, ass, meta=meta,
-                            hook_y=hook_y if image_hook else None)
-        if requested == "stacked":
-            result["layout"] = requested
-        return result
+            hook_art.make(_clean(clip["hook"]), W, brush=True).save(work / "hook.png")
+        got = _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, look=look, cam=cam, crop=crop, face=face, info=info, extras=extras, meta=meta, hook_y=hook_y if image_hook else None)
+        return dict(got, layout=requested if requested == "stacked" else layout)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, graph, ass: str, meta=None, hook_y=None) -> dict:
+def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, look, cam, crop, face,
+               info, extras, meta, hook_y=None) -> dict:
     global _qsv_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     (work / "f").mkdir()
     for f in config.FONTS_DIR.glob("*.ttf"):
         shutil.copyfile(f, work / "f" / f.name)
-    title_input = []
-    fc = graph + f"ass={name}.ass:fontsdir=f[v]"
+    more, last, n, frame = [], "v1", 1, {}
+    if cam:                                              # the cam's rounded corners and border: pictures, as inputs
+        for k, f in cam_frame(cam, look.get("cam_style"), work, name).items():
+            more += ["-loop", "1", "-i", f.name]
+            frame[k] = n
+            n += 1
+    if cam:
+        fc = cam_filter(cam, layout, fg_h, crop, frame)
+    else:
+        fc = _filter(layout, fg_h, face).replace("[0:v]", "[0:v]" + crop, 1)
+    if layout == "stacked":
+        fc += f"[v0]drawbox=x=0:y=0:w=iw:h=ih:color={FRAME_COLOR}:t={FRAME_PX}[framed];"
+    base_video = "framed" if layout == "stacked" else "v0"
+    fc += f"[{base_video}]ass={name}.ass:fontsdir=f[v1]"
     if hook_y is not None:
-        title_input = ["-loop", "1", "-framerate", str(config.OUT_FPS), "-i", "hook.png"]
-        fc = (graph + f"ass={name}.ass:fontsdir=f[captioned];"
-              f"[captioned][1:v]overlay=x=(W-w)/2:y={hook_y}-h/2:shortest=1:format=auto[v]")
-    base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
-            *title_input, "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+        more += ["-loop", "1", "-i", "hook.png"]
+        fc += f";[{last}][{n}:v]overlay=(W-w)/2:{hook_y}-h/2:shortest=1[vhook]"
+        last, n = "vhook", n + 1
+    logo = extras.get("logo")
+    if logo and Path(logo.get("path", "")).is_file():
+        args, scale, at = _logo(logo, n)
+        more += args
+        fc += f";{scale};[{last}][lg]overlay={at}:shortest=1[vl]"
+        last, n = "vl", n + 1
+    for i, e in enumerate(info["emoji"]):
+        png = work / f"{name}.e{i}.png"
+        if emoji_png(e["ch"], png, e["size"]):
+            more += ["-loop", "1", "-i", png.name]
+            fc += (f";[{n}:v]format=rgba,fade=t=in:st=0:d=0.16:alpha=1[e{i}];"
+                   f"[{last}][e{i}]overlay={e['x']}:{e['y']}:shortest=1[ve{i}]")
+            last, n = f"ve{i}", n + 1
+    base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src), *more,
+            "-filter_complex", fc, "-map", f"[{last}]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000"]
     for k, v in (meta or {}).items():
         if v:
@@ -443,22 +848,23 @@ def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layo
     if _qsv_ok is not False:
         encoders.append(("qsv", ["nv12", "-c:v", "h264_qsv", "-global_quality", "23", "-preset", "fast"]))
     encoders.append(("x264", ["yuv420p", "-c:v", "libx264", "-crf", "21", "-preset", "veryfast"]))
-    err = None
+    err, ok = None, False
     for label, enc in encoders:
         p = subprocess.run(base + enc + [f"{name}.mp4"], cwd=work, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", creationflags=NO_WINDOW, timeout=RENDER_SECONDS)
         if p.returncode == 0:
             if label == "qsv":
                 _qsv_ok = True
+            ok = True
             break
         err = p.stderr[-1200:]
         if label == "qsv":
             _qsv_ok = False
-    else:
+    if not ok:
         raise RuntimeError(f"Render failed: {err}")
     cover_t = min(1.2, (end - start) / 2)
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{cover_t:.2f}", "-i", f"{name}.mp4", "-frames:v", "1",
          "-q:v", "3", f"{name}.jpg"], cwd=work)
     for ext in ("mp4", "jpg", "ass"):
         shutil.move(str(work / f"{name}.{ext}"), str(out_dir / f"{name}.{ext}"))
-    return {"file": f"{name}.mp4", "cover": f"{name}.jpg", "layout": layout}
+    return {"file": f"{name}.mp4", "cover": f"{name}.jpg"}

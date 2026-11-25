@@ -69,7 +69,8 @@ check("a description the person wrote is posted as it is", posting._caption(dict
 
 with patch.object(render, "_render_in", return_value={"file": "a.mp4"}) as encode:
     render.render_clip(Path("x.mp4"), Path(os.environ["PEAKCUT_DATA"]) / "out", "a", {"start": 0, "end": 5, "title": "T", "description": "D text"}, [], 1920, 1080)
-    check("the title and description are written into the file as well", encode.call_args.kwargs["meta"]["description"] == "D text" and encode.call_args.kwargs["meta"]["title"] == "T")
+    check("the title and description are written into the file as well", (encode.call_args.kwargs.get("meta") or encode.call_args.args[-1])["description"] == "D text"
+          and (encode.call_args.kwargs.get("meta") or encode.call_args.args[-1])["title"] == "T")
 
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil  # noqa: E402

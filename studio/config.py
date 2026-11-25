@@ -146,9 +146,22 @@ YT_TRANSCRIPT = env("PEAKCUT_YT_TRANSCRIPT", "1") != "0"
 # YouTube often refuses servers in data centres ("sign in to confirm you're not a bot"). Cookies from a signed-in
 # YouTube account get past that: an admin pastes them under Settings, Connected apps, and they are kept in this file.
 YT_COOKIES = Path(env("PEAKCUT_YT_COOKIES") or DATA_DIR / "youtube-cookies.txt")
+# Optional: other addresses YouTube can be reached through when it refuses this machine (proxies you run yourself,
+# comma separated, like http://10.0.0.4:8888). Tried in order after this machine's own ways. Empty: none.
+YT_PROXIES = [p.strip() for p in env("PEAKCUT_YT_PROXIES", "").split(",") if p.strip()]
 # the compact model for processors; a machine with a graphics card sets PEAKCUT_ASR_MODEL to the full-precision one
 ASR_MODEL_NAME = env("PEAKCUT_ASR_MODEL", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
 ASR_MODEL_DIR = MODELS_DIR / ASR_MODEL_NAME
+# Arabic: NVIDIA's FastConformer, converted for PeakCut with tools/export_arabic_model.py. Downloaded only when asked for.
+ASR_MODEL_AR = env("PEAKCUT_ASR_MODEL_AR", "sherpa-onnx-nemo-fastconformer-ar-int8")
+# The address names one fixed version of the file (a commit), not "the latest", and the file's fingerprint (SHA-256)
+# is checked before it is unpacked, so what is downloaded can't change unless this code changes. A mirror set with
+# PEAKCUT_ASR_MODEL_AR_URL must hold the very same file; a different model needs its own PEAKCUT_ASR_MODEL_AR_SHA256.
+ASR_MODEL_AR_URL = env("PEAKCUT_ASR_MODEL_AR_URL") or (
+    "https://huggingface.co/madwezza/peakcut-arabic-speech/resolve/"
+    f"3ae1fba562d68ce5299ea32659e5973cf464e034/{ASR_MODEL_AR}.tar.bz2")
+ASR_MODEL_AR_SHA256 = (env("PEAKCUT_ASR_MODEL_AR_SHA256")
+                       or "033ac7d886b3a4f04f66f3b8959456d7f4aa28ad4dae9da96a9cc716448efff9").strip().lower()
 DATABASE_URL = env("DATABASE_URL") or f"sqlite:///{(DATA_DIR / 'peakcut.db').as_posix()}"
 # Commercials and "be right back" screens are stitched into streams. A clip taken from one is worthless, so those
 # seconds can be found and left out. It is off by default: it reads the whole video once, which is not free, and
@@ -206,10 +219,21 @@ JOB_WORKERS = int(env("PEAKCUT_JOB_WORKERS") or max(2, os.cpu_count() or 4))
 MAX_ACTIVE_JOBS_PER_USER = int(_limit("PEAKCUT_MAX_JOBS_PER_USER", "5"))    # videos sent and worked on at once
 MAX_LIVE_TOTAL = int(env("PEAKCUT_MAX_LIVE") or max(4, 2 * (os.cpu_count() or 4)))   # ceiling; real load decides below it
 MAX_LIVE_PER_USER = int(_limit("PEAKCUT_MAX_LIVE_PER_USER"))     # streams one person records at once
+# live clips are made by this many workers at once (one for everybody let clips wait past the buffer)
+LIVE_RENDER_WORKERS = int(env("PEAKCUT_LIVE_RENDER_WORKERS") or max(2, min(4, (os.cpu_count() or 4) // 4)))
 MAX_VIDEO_HOURS = _limit("PEAKCUT_MAX_VIDEO_HOURS")              # longest video (or chosen part of one) that is processed
 MAX_LIVE_HOURS = _limit("PEAKCUT_MAX_LIVE_HOURS")                # a recording stops by itself after this long
 MAX_USER_GB = _limit("PEAKCUT_MAX_USER_GB")                      # disk space one account may fill
 MAX_CREATORS = int(_limit("PEAKCUT_MAX_CREATORS"))               # creators one account may add
+# 1 on a server with the recorder service (docker-compose.yml): live recordings run there and survive app updates
+RECORDER = env("PEAKCUT_RECORDER", "0") == "1"
+# Whole videos and stream recordings are kept after their clips are made (as before). On a server short of disk,
+# PEAKCUT_KEEP_SOURCE=0 deletes each whole video once its clips are made: only the clips stay (each with a few
+# seconds either side, so it can still be re-trimmed).
+KEEP_SOURCE = env("PEAKCUT_KEEP_SOURCE", "1") != "0"
+# Tidying, for a server short on disk. Off by default: nothing of yours is deleted or re-encoded without asking.
+# PEAKCUT_TIDY=1: whole videos are deleted once their clips are made, and kept stretches above 1080p are made smaller.
+TIDY = env("PEAKCUT_TIDY", "0") == "1"
 ALLOWED_SITES = tuple(s.strip().lower() for s in env(
     "PEAKCUT_ALLOWED_SITES", "youtube.com,youtu.be,twitch.tv,kick.com").split(",") if s.strip())
 
@@ -218,6 +242,13 @@ ALLOWED_SITES = tuple(s.strip().lower() for s in env(
 AI_PROVIDER = env("PEAKCUT_AI_PROVIDER", "gemini").strip().lower()            # gemini, openai, xai, groq, openrouter, anthropic, ollama, custom
 AI_MODELS = [m.strip() for m in env("PEAKCUT_AI_MODELS", "").split(",") if m.strip()]   # tried in this order
 AI_BASE_URL = env("PEAKCUT_AI_BASE_URL", "").rstrip("/")                      # only for "custom", or to override a provider's address
+# Listening: once a clip is decided, the AI hears just that stretch of audio to set the exact cut and write the
+# captions. Only with Gemini (the others can't take audio); with any other provider it is skipped. 0 turns it off.
+LISTEN = env("PEAKCUT_LISTEN", "1") == "1"
+# Emoji on clip headings are drawn from this folder of pictures (one PNG per emoji, named by its code points, like
+# 1f62d.png): Microsoft's Fluent Emoji 3D (MIT licence, studio/emoji/LICENSE), shipped with the code so every
+# machine draws the same ones. An emoji missing from it is drawn from the machine's emoji font.
+EMOJI_DIR = env("PEAKCUT_EMOJI_DIR", "") or str(ROOT / "studio" / "emoji")
 
 
 def ai_key() -> str:
@@ -268,3 +299,14 @@ def _read_google_client() -> tuple:
 # ---------------------------------------------------------------- video
 MAX_SOURCE_HEIGHT = 1080
 OUT_W, OUT_H, OUT_FPS = 1080, 1920, 30
+
+
+# The release people are told about: the What's new pop-up (web/index.html WN_VER is the same string), the bell
+# notice every account gets once, and the "new version" note an open page shows when it is older than this.
+RELEASE = "2026-11-25"
+RELEASE_NOTICE = env("PEAKCUT_RELEASE_NOTICE", "1") == "1"
+
+# https served by PeakCut itself, without a web server in front: both files set, and the site answers on https.
+# Meta only sends people back to https addresses after they connect Instagram. Leave empty for plain http.
+SSL_CERT = env("PEAKCUT_SSL_CERT", "")
+SSL_KEY = env("PEAKCUT_SSL_KEY", "")

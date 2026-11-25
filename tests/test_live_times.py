@@ -52,24 +52,26 @@ check("the clock is the end of the last piece", s.seg_clock, 18)
 # ---- a dropped stretch of the stream does not shift everything after it
 s = session()
 pieces(s, [(0, 6), (6, 12)])
-pieces(s, [(7200, 7206), (7206, 7212)])
-check("a gap leaves the real times alone", [(a, b) for _, a, b in s.segments][-2:], [(7200, 7206), (7206, 7212)])
-check("the clock follows the stream, not the pieces", s.seg_clock, 7212)
+pieces(s, [(18, 24), (24, 30)])                  # 6 seconds of pieces lost on a reconnect
+check("a gap leaves the real times alone", [(a, b) for _, a, b in s.segments][-2:], [(18, 24), (24, 30)])
+check("the clock follows the stream, not the pieces", s.seg_clock, 30)
+pieces(s, [(7200, 7206), (7206, 7212)])          # hours ahead: the stream's clock jumped (Twitch after its opening ad)
+check("a jump of the stream's own clock is not taken for hours of lost pieces", [(a, b) for _, a, b in s.segments][-2:], [(30, 36), (36, 42)])
 
 # ---- the moment a clip asks for is found: this is what failed on the real Twitch stream
-#     (the buffer holds only the last few minutes, and its times are stream times, not piece counts)
+#     (the buffer's times follow the stream, gaps included, not a count of pieces)
 s = session()
-pieces(s, [(7182, 7188), (7188, 7194), (7194, 7200), (7200, 7206), (7206, 7212)])
-wanted = [(7190.0, 7217.0)]
+pieces(s, [(0, 6), (6, 12), (12, 18), (30, 36), (36, 42), (42, 48)])
+wanted = [(32.0, 47.0)]
 segs = [x for x in s.segments if x[2] > wanted[0][0] - live.PAD and x[1] < wanted[0][1] + live.PAD]
 check("an old moment is still found in the buffer", bool(segs), True)
-check("it starts at the moment asked for", segs[0][1] <= wanted[0][0] + 2, True)
+check("it starts at the moment asked for", [x[1] for x in segs if x[1] <= wanted[0][0] < x[2]], [30.0])
 
 # ---- only the last buffer_min minutes are kept, measured on the stream clock
 s = session(buffer_min=10)
-pieces(s, [(0, 6), (6, 12), (600, 606), (606, 612)])
+pieces(s, [(i * 6, i * 6 + 6) for i in range(102)])        # 10 minutes and 12 seconds of stream
 # (a piece that ends exactly at the edge of the buffer is kept: the edge is where the buffer starts)
-check("pieces older than the buffer are dropped", [a for _, a, _ in s.segments], [6.0, 600.0, 606.0])
+check("pieces older than the buffer are dropped", [a for _, a, _ in s.segments][:2], [6.0, 12.0])
 
 # ---- a second ffmpeg run starts its own list at zero: it is put back on the stream clock
 s = session()
@@ -96,8 +98,8 @@ job = {"title": "a stream", "uploader": "someone", "dir": job_dir, "creator": ""
        "source": {"url": "", "name": "a stream"}}
 s = live.Session(job, {"buffer_min": 10})
 live._pieces_on_disk(s)
-check("a recovered recording keeps the real times", [(a, b) for _, a, b in s.segments],
-      [(700, 706), (706, 712), (712, 718)])
+check("a recovered recording puts its pieces back on one clock, in order", [(a, b) for _, a, b in s.segments],
+      [(0, 6), (6, 12), (12, 18)])
 
 # ---- a clip asked for by hand stays inside the recorded picture
 s = session()

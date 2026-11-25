@@ -96,13 +96,14 @@ def main(data):
             job.update(status="done", source_path=str(Path(data) / "source.mp4"), width=1920, height=1080,
                        duration=4.0, clips=[clip])
             jobs.save(job)
+            (Path(data) / "source.mp4").write_bytes(b"x")     # the whole video is still kept, so the clip can be made again
 
         with (ctx.as_user(user), patch.object(render, "_render_in", return_value={"file": "clip1.mp4"}) as encode,
               patch.object(brain, "english_captions", return_value=FIXED) as prepare,
               patch.object(roman, "words", wraps=roman.words) as romanize,
               patch.object(jobs._q, "put") as queue):
             jobs.render_one(job, clip, WORDS)
-            ass = encode.call_args.args[-1]
+            ass = next(x for x in encode.call_args.args if isinstance(x, str) and "[Events]" in x)
             check("an older saved clip still renders spoken captions",
                   clip["status"] == "done" and has_dialogue(ass, "Cap", "POLISHED"))
             check("caption preparation is cached for the clip", prepare.call_count == 1 and clip["fixed_words"] == FIXED)
@@ -119,7 +120,7 @@ def main(data):
             check("the clip editor can turn captions off", response["clips"][0]["captions"] is False)
             check("turning captions off queues the clip for rendering", queue.call_args.args[0] == ("clip", job["id"], clip["id"]))
             jobs.render_one(job, clip, WORDS)
-            ass = encode.call_args.args[-1]
+            ass = next(x for x in encode.call_args.args if isinstance(x, str) and "[Events]" in x)
             check("turning off captions keeps the hook and skips caption processing",
                   clip["status"] == "done" and not has_dialogue(ass, "Cap") and has_dialogue(ass, "Hook", "KEEP THE HOOK")
                   and not prepare.called and not romanize.called)
@@ -131,12 +132,12 @@ def main(data):
             check("the clip editor can turn captions back on", response["clips"][0]["captions"] is True)
             jobs.render_one(job, clip, WORDS)
             check("turning captions back on uses the cached words",
-                  clip["status"] == "done" and has_dialogue(encode.call_args.args[-1], "Cap", "POLISHED")
+                  clip["status"] == "done" and has_dialogue(next(x for x in encode.call_args.args if isinstance(x, str) and "[Events]" in x), "Cap", "POLISHED")
                   and not prepare.called)
 
             render.render_clip(Path(data) / "source.mp4", Path(data) / "clips", "direct",
                                dict(clip, captions=False), WORDS, 1920, 1080)
-            ass = encode.call_args.args[-1]
+            ass = next(x for x in encode.call_args.args if isinstance(x, str) and "[Events]" in x)
             check("the renderer honors captions off even when it receives spoken words",
                   not has_dialogue(ass, "Cap") and has_dialogue(ass, "Hook", "KEEP THE HOOK"))
     finally:

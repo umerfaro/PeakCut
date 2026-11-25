@@ -51,7 +51,7 @@ sleeps = []
 answers = [failure(429, "slow down"), failure(429, "slow down"), ([{"hook": "h"}], 10, 5)]
 
 
-def fake_call(model, prompt, schema, timeout=None):
+def fake_call(model, prompt, schema, timeout=None, *a, **k):
     a = answers.pop(0)
     if isinstance(a, Exception):
         raise a
@@ -68,7 +68,7 @@ sleeps.clear()
 tried = []
 
 
-def daily_then_ok(model, prompt, schema, timeout=None):
+def daily_then_ok(model, prompt, schema, timeout=None, *a, **k):
     tried.append(model)
     if model == "m1":
         raise failure(429, long_body)

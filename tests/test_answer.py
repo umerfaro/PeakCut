@@ -32,13 +32,13 @@ words = "Okay, I hope. You are all planning wild night out there. You can"
 with patch.object(brain, "ask_ai", side_effect=[([], "m", 1), ([item], "m", 2)]) as ask:
     c = brain.describe(words, "GTA V #16", "Chan")
     check("an empty answer is asked again", ask.call_count, 2)
-    check("the second answer is used", c["hook"], "WILD NIGHT")
+    check("the second answer is used (headings in sentence case)", c["hook"], "Wild night")
 with patch.object(brain, "ask_ai", side_effect=[([], "m", 1), ([], "m", 2)]):
     c = brain.describe(words, "GTA V #16", "Chan")
-    check("two empty answers give a clip with no hook, not an error", c["hook"], "")
+    check("two empty answers still give a clip, headed by what was said, not an error", (bool(c["hook"]), bool(c["title"])), (True, True))
 with patch.object(brain, "ask_ai", side_effect=RuntimeError("The AI did not answer")):
     c = brain.describe(words, "GTA V #16", "Chan")
-    check("a failed call gives a clip with no hook, not an error", c["hook"], "")
+    check("a failed call still gives a clip, headed by what was said, not an error", (bool(c["hook"]), bool(c["title"])), (True, True))
 
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

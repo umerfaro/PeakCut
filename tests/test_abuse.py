@@ -19,6 +19,15 @@ c = httpx.Client(base_url=BASE, timeout=60)
 anon = httpx.Client(base_url=BASE, timeout=60)
 r = c.post("/api/auth/signup", json={"email": "zed@example.com", "password": "test-pass-123", "name": "Zed"}, headers=ORIGIN)
 assert r.status_code == 200, r.text
+check("signing up does not sign in before the email is confirmed", (r.json().get("confirm"), c.get("/api/auth/me").status_code), (True, 200))
+check("...and no session came with it", c.get("/api/auth/me").json()["user"], None)
+r = c.post("/api/auth/login", json={"email": "zed@example.com", "password": "test-pass-123"}, headers=ORIGIN)
+check("signing in before confirming: refused, and told to confirm", (r.status_code, r.json().get("confirm")), (403, True))
+check("the dashboard sends an unconfirmed visitor to sign in", c.get("/app", follow_redirects=False).status_code, lambda s: s in (302, 303, 307))
+import os, subprocess  # noqa: E401,E402
+subprocess.run([sys.executable, "-c", "import sqlalchemy as sa; from studio import auth, db; db.init(); "
+                "auth.mark_verified(db.engine.connect().execute(sa.select(db.users.c.id).where(db.users.c.email == 'zed@example.com')).scalar())"],
+               cwd=sys.argv[2], env=os.environ, check=True, capture_output=True)
 
 # ---- big bodies are refused before anything reads them
 big = b"x" * (300 * 1024)
@@ -32,7 +41,7 @@ def chunks():
 
 
 check("chunked 640 KB body with no length refused", anon.post("/api/auth/login", content=chunks(), headers={**ORIGIN, "Content-Type": "application/json"}).status_code, lambda s: s in (413, 400))
-check("normal login still works", anon.post("/api/auth/login", json={"email": "zed@example.com", "password": "test-pass-123"}, headers=ORIGIN).status_code, 200)
+check("normal login still works", c.post("/api/auth/login", json={"email": "zed@example.com", "password": "test-pass-123"}, headers=ORIGIN).status_code, 200)
 
 # ---- the page's cheap check
 s1 = c.get("/api/sync").json()
@@ -44,15 +53,7 @@ s3 = c.get("/api/sync", params={"v": s1["v"]}).json()
 check("sync notices a new creator", [x["name"] for x in s3.get("creators", [])], ["Sync Test"])
 check("sync needs a session", anon.__class__(base_url=BASE).get("/api/sync").status_code, 401)
 
-# ---- unverified account: no AI work, no uploads accepted
-check("unverified cannot start a job", c.post("/api/jobs", json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}, headers=ORIGIN).status_code, 403)
-check("unverified upload refused before the file is read", c.post("/api/upload", files={"file": ("a.mp4", b"0" * 200000, "video/mp4")}, headers=ORIGIN).status_code, 403)
-
-# ---- confirm the email the way the server would after the link is clicked, then try bad options
-import os, subprocess  # noqa: E401,E402
-uid = c.get("/api/auth/me").json()["user"]["id"]
-subprocess.run([sys.executable, "-c", f"from studio import auth, db; db.init(); auth.mark_verified({uid!r})"],
-               cwd=sys.argv[2], env=os.environ, check=True, capture_output=True)
+# ---- confirmed (above, the way the server does after the link is clicked): try bad options
 check("verified now", c.get("/api/auth/me").json()["user"]["verified"], True)
 for bad in ({"range_start": -5}, {"range_start": 50, "range_end": 10}, {"quality": "abc"}, {"range_end": "NaN"}):
     check(f"options {bad} refused", c.post("/api/jobs", json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "options": bad}, headers=ORIGIN).status_code, 400)

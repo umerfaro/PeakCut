@@ -165,6 +165,7 @@ _UR_CONS = {"ب": "b", "پ": "p", "ت": "t", "ٹ": "t", "ث": "s", "ج": "j", "�
             "ن": "n", "ہ": "h", "ه": "h", "ة": "a", "ھ": "h"}
 _UR_MARKS = {"َ": "a", "ِ": "i", "ُ": "u", "ّ": "", "ْ": "", "ً": "an", "ٰ": "a"}
 _UR_DIGITS = {**{chr(0x06F0 + i): str(i) for i in range(10)}, **{chr(0x0660 + i): str(i) for i in range(10)}}
+_AR_PUNCT = {"،": ",", "؟": "?", "؛": ";", "٪": "%"}    # Arabic commas and question marks: the caption fonts lack them
 
 
 def _urdu_word(w: str) -> str:
@@ -185,8 +186,12 @@ def _urdu_word(w: str) -> str:
         if ch == "ھ":                     # do chashmi he: the "h" of bh, ph, kh, chh...
             out.append("h")
             continue
-        if ch in "اآ":
-            out.append("aa" if ch == "آ" else "a")
+        if ch in _AR_PUNCT:
+            out.append(_AR_PUNCT[ch])
+            prev_cons = False
+            continue
+        if ch in "اآأإٱ":                 # alef, and alef with hamza or wasla (أنا, إن): Arabic writes these often
+            out.append("aa" if ch == "آ" else "i" if ch == "إ" else "a")
             prev_cons = False
             continue
         if ch in "وؤ":

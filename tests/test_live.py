@@ -42,7 +42,7 @@ with ctx.as_user(u.id):
     popen_calls = []
     real_popen = live.subprocess.Popen
 
-    def slow_resolve(url):
+    def slow_resolve(url, *a, **k):
         entered.set()
         stopped.wait(4)
         return {"urls": ["http://127.0.0.1:9/x.m3u8"], "title": "t", "uploader": "u"}
@@ -74,7 +74,7 @@ with ctx.as_user(u.id):
             def read(self, n): return b""
             def close(self): pass
         stdout = _Out()
-        def poll(self): return None
+        def poll(self): return 0 if killed else None      # once killed, it is gone
         def terminate(self): pass
         def wait(self, timeout=None):
             if timeout is not None and not killed:
@@ -83,7 +83,7 @@ with ctx.as_user(u.id):
         def kill(self):
             killed.append(True)
 
-    live.resolve = lambda url: {"urls": ["http://127.0.0.1:9/x.m3u8"], "title": "t", "uploader": "u"}
+    live.resolve = lambda url, *a, **k: {"urls": ["http://127.0.0.1:9/x.m3u8"], "title": "t", "uploader": "u"}
     def one_shot_popen(*a, **k):
         s3.stop_flag.set()
         return StuckProc()
@@ -93,7 +93,7 @@ with ctx.as_user(u.id):
         j3.update(status="live", stage="Connecting to the stream"); jobs.save(j3)
         s3 = live.Session(j3, cr)
         s3.start()
-        done3 = wait_for(lambda: s3.ended)
+        done3 = wait_for(lambda: s3.ended and bool(killed), 30)
     finally:
         live.subprocess.Popen = real_popen
     check("a hung ffmpeg process is force-killed after wait timeout", bool(killed) and done3, f"killed={killed} ended={s3.ended}")

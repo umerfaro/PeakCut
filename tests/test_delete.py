@@ -23,13 +23,23 @@ def video(creator=None, n=3, status="done"):
 with ctx.as_user(a.id):
     c = creators.create({"name": "Streamer"})
     j1, j2, j3 = video(), video(c["id"]), video(status="running")
+    cl = Path(j1["dir"]) / "clips"
+    whole = Path(j1["dir"]) / "source.mp4"; whole.write_bytes(b"v" * 1000)
+    for cid in ("clip01", "clip02"):            # each clip's own source piece, captions and post text
+        for ext in (".src.mp4", ".ass", ".json"):
+            (cl / f"{cid}{ext}").write_bytes(b"x" * 100)
+        next(k for k in j1["clips"] if k["id"] == cid)["src"] = str(cl / f"{cid}.src.mp4")
+    j1["clips"][2]["src"] = str(whole)          # a clip made from the whole video
+    jobs.save(j1)
     check("one clip is deleted with its files", account.delete_clip(j1["id"], "clip01") and not (Path(j1["dir"]) / "clips" / "clip01.mp4").exists() and len(jobs.get(j1["id"])["clips"]) == 2)
-    left = [e for e in ("ass", "json", "src.ts") if (Path(j1["dir"]) / "clips" / f"clip01.{e}").exists()]
-    check("...and its captions, notes and cut-out piece of video too", not left, str(left))
-    check("...while the other clips keep theirs", all((Path(j1["dir"]) / "clips" / f"clip02.{e}").exists() for e in ("ass", "json", "src.ts")))
-    j_own = video(n=1); jj = jobs.get(j_own["id"]); whole = Path(jj["dir"]) / "whole.mp4"; whole.write_bytes(b"x" * 1000)
-    jj["clips"][0]["src"] = str(whole); jobs.save(jj); account.delete_clip(jj["id"], "clip01")
-    check("the video's own file is never taken for a clip's piece", whole.exists())
+    left = sorted(f.name for f in cl.iterdir() if f.name.startswith("clip01"))
+    check("...all of them: its source piece, captions and post text too", not left, str(left) if left else "")
+    check("...and nothing of the other clips", all((cl / f"clip02{e}").exists() for e in (".mp4", ".jpg", ".src.mp4", ".ass", ".json")))
+    check("deleting a clip made from the whole video never deletes the whole video",
+          account.delete_clip(j1["id"], "clip03") and whole.exists() and (cl / "clip02.src.mp4").exists())
+    j1["clips"].append({"id": "clip03", "status": "done", "file": "clip03.mp4", "cover": "clip03.jpg", "title": "Same title", "start": 0, "end": 10})
+    for ext in ("mp4", "jpg"): (cl / f"clip03.{ext}").write_bytes(b"x" * 1000)
+    jobs.save(j1)
     z = account.zip_clips([(j1["id"], "clip02"), (j1["id"], "clip03"), (j2["id"], "clip01"), ("nope", "x")])
     names = zipfile.ZipFile(z).namelist()
     check("several clips download as one zip with distinct names", len(names) == 3 and len(set(names)) == 3, str(names))

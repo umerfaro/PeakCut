@@ -36,11 +36,20 @@ db.init()
 with db.engine.begin() as cn:
     for (uid,) in cn.execute(sa.select(db.users.c.id).where(db.users.c.email.like("pieces-%"))).all():
         cn.execute(db.email_ok.insert().values(user_id=uid, verified_at=time.time()))
+for cl, em in ((a, "pieces-a@example.com"), (b, "pieces-b@example.com")):     # confirmed: now they can sign in
+    cl.post("/api/auth/login", json={"email": em, "password": "test-pass-123"})
 st = a.get("/api/status").json()
 part_mb = st["upload_part_mb"]
 data = os.urandom(int(part_mb * 1024 * 1024 * 2.4))            # two full pieces and a shorter last one
 H = {"Content-Type": "application/octet-stream"}
 
+long = "YTDown.com_YouTube_Media_JaZAapq9WH0_13-Nov-2026-Question-Answer-Session-With-Public-" + "x" * 80 + "_720p.mp4"
+r = a.post("/api/upload/start", json={"name": long, "size": 1000, "options": {}, "creator": ""})
+check("a downloader's long file name is still taken as mp4", r.status_code == 200, r.text[:120])
+if r.status_code == 200:
+    a.delete(f"/api/upload/{r.json()['id']}")
+check("a file that is not a video is still refused",
+      a.post("/api/upload/start", json={"name": "setup.exe", "size": 1000, "options": {}, "creator": ""}).status_code == 400)
 s = a.post("/api/upload/start", json={"name": "big video.mp4", "size": len(data), "options": {"max_clips": 2}, "creator": ""}).json()
 check("a big file is split into pieces", s.get("parts") == 3, str(s))
 part = s["part"]

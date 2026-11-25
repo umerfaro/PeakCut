@@ -83,7 +83,7 @@ try:
 except RuntimeError as e:
     said = str(e)
 check("a connection that stalls partway fails cleanly, with its reason", "timed out" in said, True)
-check("a stalled download leaves no partial file and frees the lock", (sorted(p.name for p in config.MODELS_DIR.iterdir()), fetch_model.state["doing"], fetch_model._lock.locked()), ([], False, False))
+check("a stalled download leaves no partial file and frees the lock", (sorted(p.name for p in config.MODELS_DIR.iterdir()), fetch_model.state["en"]["doing"], fetch_model._locks["en"].locked()), ([], False, False))
 
 # ---- the AI
 check("an unknown model name", ai.explain("HTTP 404 models/gemini-old is not found for API version v1beta"), lambda s: "gemini-old" in s and "Find models" in s)
