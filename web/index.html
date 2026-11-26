@@ -5885,7 +5885,7 @@ async function tplAct(a, d) {
   if (a === "tplvideo") return tplVideoDlg();
   if (a === "gotpls") { closePicks(); for (const x of ["#tpldlg", "#clipdlg"]) if ($(x)?.open) $(x).close(); return go("styles"); }
 }
-// a streamer's template for new clips (the bar above its clips), and a clip made again with another template
+// A streamer's template for new clips (the bar above its clips).
 document.addEventListener("change", async e => {
   const t = e.target;
   try {
@@ -5899,10 +5899,6 @@ document.addEventListener("change", async e => {
       const c = creator(); if (!c) return;
       Object.assign(c, await send(`/api/creators/${encodeURIComponent(c.id)}`, {template: t.value}, "PUT"));
       toast(`New clips of ${c.name} use the ${tplOf(t.value)?.name || "chosen"} style.`, "ok"); hqNote();
-    }
-    if (t.id === "cd_tpl") {
-      const j = jobOf(D.jid), c = j?.clips.find(x => x.id === D.cid), b = $("#clipdlg [data-act=cdremake]");
-      if (b) b.hidden = !c || t.value === (tplOf(c.template) ? c.template : "") || !t.value;
     }
   } catch (er) { toast(er.message, "bad"); }
 });
@@ -6330,9 +6326,7 @@ function drawClipDlg(full) {
         <div class="ce3-f"><label>Title <small id="cdsaved"></small><button type="button" class="btn sm ghost ce3-ai" data-act="writetext">${ic("bolt")}Write again with AI</button></label><input data-tx="title" maxlength="100" value="${esc(c.title)}" placeholder="What the post is called"></div>
         <div class="ce3-f"><label>Caption</label><textarea data-tx="description" rows="3" maxlength="2000" placeholder="Write a caption">${esc(c.description)}</textarea></div>
         <div class="ce3-f"><label>Hashtags</label><input data-tx="hashtags" value="${esc((c.hashtags || []).map(t => "#" + t).join(" "))}" placeholder="#gaming #clips"></div>
-        ${["done", "error"].includes(c.status) ? `<div class="ce3-f"><label>Style</label><div class="ce3-tpl">${tplChip("cd_tpl", tplOf(c.template) ? c.template : "", {made: !tplOf(c.template)})}
-          <button class="btn sm primary" data-act="cdremake" hidden>${ic("scissors")}Make again</button></div>
-          ${c.soft ? `<p class="hq-note">${ic("warn")}This video is low quality, so the zoomed-in part may look soft.</p>` : ""}</div>` : ""}
+        <div id="dclipstyle" hidden></div>
         <div id="dclipmusic" class="ce3-f"></div>
         <div class="ce3-line"></div>
         <div id="dposts"></div>
@@ -6347,6 +6341,18 @@ function drawClipDlg(full) {
       </div></div>`;
     cdCal(); schTp(); cdLabel(); vpWire();
   } else if (D.sig !== sig) { $("#stage").innerHTML = stage; vpWire(); }
+  const template = tplOf(c.template), styleSig = `${sig}:${template?.id || ""}:${c.soft}`;
+  if (full || D.styleSig !== styleSig) {
+    const section = $("#dclipstyle");
+    section.hidden = !["done", "error"].includes(c.status);
+    put(section, section.hidden ? "" : `<div class="ce3-f"><label>Style</label>
+      <div class="ce3-tpl">${tplChip("cd_tpl", template?.id || "", {made: !template})}
+        <button type="button" class="btn sm primary" data-act="cdremake">${ic("scissors")}Make again</button></div>
+      ${c.soft ? `<p class="hq-note">${ic("warn")}This video is low quality, so the zoomed-in part may look soft.</p>` : ""}</div>`);
+    D.styleSig = styleSig;
+  }
+  const remake = $("#clipdlg [data-act=cdremake]");
+  if (remake) remake.disabled = remake.dataset.sending === "true" || ["queued", "running"].includes(j.status);
   D.sig = sig;
   put($("#dclipmusic"), clipMusicButton(c));
   put($("#dposts"), c.status === "done" ? clipWhere(c, true) : "");
@@ -6907,8 +6913,21 @@ document.addEventListener("click", async e => {
     if (a === "whatsnew") return go("updates");
     if (a.startsWith("tpl") || a === "gotpls" || a === "cbopts" || a === "cbsave") return tplAct(a, d);
     if (a === "musicclip" || a === "musicstyle") return await openMusic(a === "musicstyle" ? "style" : "clip");
-    if (a === "cdremake") { const v = $("#cd_tpl")?.value; if (!v) return;
-      await send(`/api/jobs/${D.jid}/clips/${D.cid}/render`, {template: v}); toast("Making it again in this style. Posts wait for the new version.", "ok"); await tick(); return drawClipDlg(true); }
+    if (a === "cdremake") {
+      const {jid, cid} = D, template = $("#cd_tpl")?.value;
+      b.dataset.sending = "true";
+      b.disabled = true;
+      try {
+        await send(`/api/jobs/${jid}/clips/${cid}/render`, template ? {template} : {});
+        toast("Making it again in this style. Posts wait for the new version.", "ok");
+        await tick();
+        if (jid === D.jid && cid === D.cid) drawClipDlg(true);
+      } finally {
+        delete b.dataset.sending;
+        b.disabled = ["queued", "running"].includes(jobOf(jid)?.status);
+      }
+      return;
+    }
     if (a === "settab") { e.preventDefault(); if (S.tplEdit?.dirty && !await ask("Leave without saving?", "Your changes to this style are lost.", "Leave", true)) return;
       S.tplEdit = null; S.stab = d.k; remember("settings", d.k); return drawSettings(); }
     if (a === "updseen") { try { localStorage.setItem("peakcut_updated_seen", S.status.updated?.version || ""); } catch {} return drawShell(); }
