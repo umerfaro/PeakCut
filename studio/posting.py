@@ -26,6 +26,9 @@ def _mine() -> list:
     u = ctx.uid()
     return [p for p in _posts if p.get("user") == u]
 OPEN = ("scheduled", "posting")
+# Instagram and Facebook (Composio) must not upload at the same moment: space them by this many seconds.
+PLATFORM_STAGGER_SEC = 5 * 60
+STAGGER_PLATFORMS = frozenset({"instagram", "facebook"})
 
 
 def _save():
@@ -87,6 +90,46 @@ def _morning_after(t):
     return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 9, 0, 0, 0, 0, -1))
 
 
+def _other_meta_times(platform, extra=()) -> list:
+    """Due times of the other Meta platform (Instagram vs Facebook) for this user, plus any just picked in this batch.
+
+    Same-platform posts keep the account gap only; this spacing is only so Instagram and Facebook do not upload together."""
+    other = STAGGER_PLATFORMS - {platform}
+    now = time.time()
+    out = list(extra)
+    for p in _mine():
+        if p.get("platform") not in other or p["status"] not in OPEN:
+            continue
+        out.append(now if p["status"] == "posting" else float(p.get("due_at") or 0))
+    return out
+
+
+def _meta_slot(due, taken) -> float:
+    """Earliest time at or after due that stays PLATFORM_STAGGER_SEC clear of every time in taken."""
+    t = float(due)
+    for _ in range(80):
+        hit = next((o for o in taken if abs(t - o) < PLATFORM_STAGGER_SEC), None)
+        if hit is None:
+            return t
+        t = hit + PLATFORM_STAGGER_SEC
+    return t
+
+
+def _stagger_meta_posts(rows) -> list:
+    """Push Instagram/Facebook posts that clash with the other platform forward by PLATFORM_STAGGER_SEC."""
+    ordered = sorted(rows, key=lambda p: (float(p.get("due_at") or 0), p.get("id") or ""))
+    changed = []
+    for i, p in enumerate(ordered):
+        slot = float(p.get("due_at") or 0)
+        others = [float(o.get("due_at") or 0) for o in ordered[:i]
+                  if o.get("platform") in STAGGER_PLATFORMS - {p.get("platform")}]
+        new = _meta_slot(slot, others)
+        if new != slot:
+            p.update(due_at=new, error=None, tries=0)
+            changed.append(p)
+    return changed
+
+
 def reschedule(creator_id) -> int:
     """Move this creator's waiting posts onto the gap and daily limit saved for them.
 
@@ -118,6 +161,11 @@ def reschedule(creator_id) -> int:
                 p.update(due_at=slot, error=None, tries=0)
                 taken.append(slot)
                 t = slot + gap
+                moved.append(p)
+        meta = [p for p in mine if p.get("creator") == creator_id and p["status"] == "scheduled"
+                and p.get("platform") in STAGGER_PLATFORMS]
+        for p in _stagger_meta_posts(meta):
+            if p not in moved:
                 moved.append(p)
         if moved:
             _save()
@@ -166,6 +214,7 @@ def enqueue(job, clip, account_ids, now=False, at=None, day=None, gap_min=None, 
                 if used + n > dcap:
                     name = {"youtube": "YouTube", "instagram": "Instagram", "tiktok": "TikTok"}.get(plat, plat)
                     raise ValueError(f"{name} already has {used} of {dcap} posts on this day. Pick another day for {name}.")
+        batch_meta = {plat: [] for plat in STAGGER_PLATFORMS}  # due times picked for each Meta platform in this call
         for aid in account_ids:
             acc = accounts.get(aid)
             if not acc:
@@ -174,6 +223,11 @@ def enqueue(job, clip, account_ids, now=False, at=None, day=None, gap_min=None, 
                    and p["status"] in OPEN + ("posted",) for p in _mine()):
                 continue  # never post the same clip to the same account twice
             due = time.time() if now else at if at is not None else _next_slot(aid, gap_min, cap)
+            plat = acc["platform"]
+            if plat in STAGGER_PLATFORMS:
+                other = next(iter(STAGGER_PLATFORMS - {plat}))
+                due = _meta_slot(due, _other_meta_times(plat, batch_meta[other]))
+                batch_meta[plat].append(due)
             p = {"id": secrets.token_hex(8), "user": ctx.uid(), "job": job["id"], "clip": clip["id"], "creator": job["creator"],
                  "account": aid, "account_name": acc["name"], "platform": acc["platform"], "status": "scheduled",
                  "due_at": due, "created": time.time(), "title": clip.get("title") or clip.get("hook") or "Clip",
@@ -372,6 +426,7 @@ def _go(p):
 def _run():
     # Posts go out on time: the queue is looked at every 3 seconds, and each due post uploads on its own thread,
     # so nine posts planned for 6 pm all start at 6 pm instead of waiting behind each other's uploads.
+    # Instagram and Facebook are an exception: only one of those uploads runs at a time (Composio's workbench).
     while True:
         time.sleep(3)
         due = [p for p in list(_posts) if p["status"] == "scheduled" and p["due_at"] <= time.time() and p.get("user")]
@@ -383,6 +438,10 @@ def _run():
                     with _lock:
                         if p["status"] != "scheduled":
                             continue
+                        if p.get("platform") in STAGGER_PLATFORMS and any(
+                                x.get("status") == "posting" and x.get("platform") in STAGGER_PLATFORMS
+                                for x in _posts):
+                            continue    # another IG/FB upload is still running; try again next tick
                         p["status"] = "posting"
                 threading.Thread(target=_go, args=(p,), daemon=True).start()
             except Exception:  # noqa: BLE001
