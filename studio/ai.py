@@ -1,5 +1,5 @@
 """Talking to the AI service. You bring your own key, and choose the service and model in the dashboard
-(Settings, AI) or in .env. What is saved from the dashboard is kept in ai.json in the data folder and wins.
+(the AI page) or in .env. What is saved from the dashboard is kept in ai.json in the data folder and wins.
 
     PEAKCUT_AI_PROVIDER   gemini | openai | xai | groq | openrouter | anthropic | ollama | custom
     PEAKCUT_AI_MODELS     one or more model ids, comma separated, tried in this order
@@ -20,6 +20,7 @@ These optional .env settings only apply while the service is the one .env names:
     PEAKCUT_AI_FIX_THINKING   Gemini thinking budget (a number) or level (a word) for those
     PEAKCUT_AI_TIMING_MODEL   Gemini speech-to-text model that times every word in any language (off when empty)"""
 import base64
+import hashlib
 import json
 import os
 import re
@@ -37,11 +38,20 @@ PROVIDERS = {
     "groq": ("Groq", "https://api.groq.com/openai/v1", "openai", "https://console.groq.com/keys", "llama-3.3-70b-versatile"),
     "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1", "openai", "https://openrouter.ai/keys", "google/gemini-2.5-flash"),
     "anthropic": ("Claude", "https://api.anthropic.com/v1", "anthropic", "https://console.anthropic.com", ""),
+    "deepseek": ("DeepSeek", "https://api.deepseek.com/v1", "openai", "https://platform.deepseek.com/api_keys", "deepseek-chat"),
+    "mistral": ("Mistral", "https://api.mistral.ai/v1", "openai", "https://console.mistral.ai/api-keys", "mistral-small-latest"),
+    "together": ("Together AI", "https://api.together.xyz/v1", "openai", "https://api.together.ai/settings/api-keys", ""),
+    "fireworks": ("Fireworks AI", "https://api.fireworks.ai/inference/v1", "openai", "https://fireworks.ai/account/api-keys", ""),
+    "cerebras": ("Cerebras", "https://api.cerebras.ai/v1", "openai", "https://cloud.cerebras.ai", ""),
+    "nvidia": ("NVIDIA", "https://integrate.api.nvidia.com/v1", "openai", "https://build.nvidia.com", ""),
+    "moonshot": ("Moonshot (Kimi)", "https://api.moonshot.ai/v1", "openai", "https://platform.moonshot.ai/console/api-keys", ""),
+    "qwen": ("Qwen (Alibaba)", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "openai", "https://bailian.console.alibabacloud.com", "qwen-plus"),
+    "lmstudio": ("LM Studio (on this machine)", "http://127.0.0.1:1234/v1", "openai", "https://lmstudio.ai", ""),
     "ollama": ("Ollama (on this machine)", "http://127.0.0.1:11434/v1", "openai", "https://ollama.com", "llama3.1"),
     "custom": ("Custom (OpenAI-compatible)", "", "openai", "", ""),
 }
 ALIASES = {"google": "gemini", "grok": "xai", "claude": "anthropic", "local": "ollama"}
-NO_KEY = {"ollama", "custom"}       # a model running on your own machine needs no key
+NO_KEY = {"ollama", "lmstudio", "custom"}       # a model running on your own machine needs no key
 
 # ---------------------------------------------------------------- the settings in use
 _lock = threading.Lock()
@@ -150,6 +160,20 @@ def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
     return public()
 
 
+def remove_key() -> dict:
+    """Forget the key. The service and model stay chosen; an empty key is saved, so one in .env isn't used either."""
+    c = current()
+    with _lock:
+        f = _file()
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"provider": c["provider"], "models": c["models"], "base_url": c["base_url"], "key": ""}), encoding="utf-8")
+        tmp.replace(f)
+        _saved["at"] = None
+        _checked.clear()
+    clear_problem()
+    return public()
+
+
 def list_models(provider_id=None, address=None, with_key=None) -> list:
     """The model ids a service offers, so the settings page can show a list to pick from."""
     c = current()
@@ -162,7 +186,7 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
         raise ValueError("Enter the service's address first.")
     how = PROVIDERS[p][2]
     if how == "gemini":
-        r = httpx.get(base, params={"pageSize": 200}, headers={"x-goog-api-key": k}, timeout=20)
+        r = httpx.get(base, params={"pageSize": 200}, headers={"x-goog-api-key": k}, timeout=10)
     elif how == "anthropic":
         r = httpx.get(f"{base}/models", params={"limit": 200}, headers={"x-api-key": k, "anthropic-version": "2023-06-01"}, timeout=20)
     else:
@@ -180,8 +204,76 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
             if mid and low_id != "aqa" and not any(t in low_id for t in ("-tts", "-image", "imagen-", "veo-", "lyria-", "embedding")):
                 found.append(mid)
     else:
-        found = [m.get("id", "") for m in data.get("data", []) if isinstance(m, dict)]
-    return sorted({m for m in found if m})[:400]
+        rows = data if isinstance(data, list) else data.get("data", [])
+        found = [m.get("id", "") for m in rows if isinstance(m, dict)]
+    found = sorted({m for m in found if m and _writes_text(m)}, key=_rank)[:400]
+    return _usable(found, base, k) if how == "gemini" and k else found
+
+
+_checked: dict = {}          # (address, key) -> (when, the models that answered), so a page visit doesn't ask again
+CHECK_FOR = 3600
+CHECK_WAIT = 6              # seconds the page waits for the models to answer
+
+
+def _usable(found: list, base: str, k: str) -> list:
+    """Google lists models a key can't use (retired ones such as the 2.5 family for newer keys, paid-only ones,
+    ones for another kind of request). Each is asked for a single word, and only those that answer, or are just
+    busy for the moment, are offered."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor, wait
+    mark = (base, hashlib.sha256(k.encode()).hexdigest())
+    had = _checked.get(mark)
+    if had and time.time() - had[0] < CHECK_FOR:
+        return had[1]
+
+    def ask(m):
+        try:
+            r = httpx.post(f"{base}/{_gem(m)}:generateContent", headers={"x-goog-api-key": k}, timeout=CHECK_WAIT,
+                           json={"contents": [{"parts": [{"text": "ok"}]}], "generationConfig": {"maxOutputTokens": 1}})
+            return r.status_code
+        except httpx.HTTPError:
+            return 0                        # slow to answer: not proof that it can't be used
+
+    pool = ThreadPoolExecutor(32)
+    asked = [pool.submit(ask, m) for m in found[:60]]
+    done = wait(asked, timeout=CHECK_WAIT).done
+    pool.shutdown(wait=False, cancel_futures=True)          # stragglers are not waited for
+    codes = [f.result() if f in done else 0 for f in asked]
+    good = [m for m, c in zip(found, codes) if c == 200]
+    busy = [m for m, c in zip(found, codes) if c == 0 or c >= 500]
+    if not good and not busy and 429 in codes:
+        raise AIError("HTTP 429 The key has hit its limit for now.")
+    out = good + busy
+    _checked[mark] = (time.time(), out)
+    return out
+
+
+# Models a service lists that cannot write the text PeakCut asks for: speech, pictures, video, embeddings, safety
+# checks and the like. They are left out of the list so nobody picks one by mistake.
+_NOT_TEXT = ("whisper", "tts", "transcribe", "speech", "audio", "realtime", "dall-e", "image", "imagen", "veo-", "sora",
+             "lyria", "banana", "robotics", "embed", "moderation", "guard", "rerank", "babbage", "davinci", "-search", "computer-use", "aqa")
+
+
+def _writes_text(model_id: str) -> bool:
+    low = model_id.lower()
+    return not any(t in low for t in _NOT_TEXT)
+
+
+def _rank(model_id: str):
+    """The order models are offered in: finished models before previews and experiments, the fast and inexpensive
+    kinds first (what PeakCut needs), and newer versions before older ones."""
+    low = model_id.lower()
+    parts = set(re.split(r"[-_/:.@\s]+", low))             # whole name parts: "gemini" must not count as "mini"
+    unfinished = bool(parts & {"preview", "exp", "experimental", "beta", "alpha"})
+    cheap = 0 if "flash-lite" in low or parts & {"mini", "haiku", "nano", "small", "instant", "lite", "8b"} else \
+        1 if parts & {"flash", "fast", "turbo"} else 2
+    nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", low)[:2]] or [0.0]
+    return (unfinished, cheap, [-n for n in nums], low)
+
+
+def recommended(found: list) -> str:
+    """The model to suggest from a service's list: the first one in the order above."""
+    return found[0] if found else ""
 
 
 def test() -> dict:
@@ -189,7 +281,21 @@ def test() -> dict:
     ms = models()
     if not ready():
         raise ValueError("Save a service, a model and a key first.")
-    out, sent, wrote = call(ms[0], 'Answer with a JSON array that holds the single string "ok".', {"type": "ARRAY", "items": {"type": "STRING"}})
+    import time
+    for attempt in (1, 2):
+        try:
+            out, sent, wrote = call(ms[0], 'Answer with a JSON array that holds the single string "ok".', {"type": "ARRAY", "items": {"type": "STRING"}})
+            break
+        except Exception as e:
+            if is_busy(e):
+                if attempt == 1:
+                    time.sleep(2)
+                    continue
+                clear_problem()                 # the service answered: the key is fine, the model is just busy
+                return {"ok": True, "busy": True, "model": ms[0], "tokens": 0, "answer": ""}
+            note_problem(e)                     # the warning on the pages says why
+            raise
+    clear_problem()
     return {"ok": True, "model": ms[0], "tokens": sent + wrote, "answer": str(out)[:80]}
 
 
@@ -212,25 +318,34 @@ class Unreadable(AIError):
 problem = {"text": "", "at": 0.0}       # why the AI last failed, for the dashboard; cleared when it answers again
 
 
-def explain(e) -> str:
+def is_busy(e) -> bool:
+    """The service itself is overloaded or down for the moment (HTTP 5xx): the key and the setup are fine."""
+    return bool(re.search(r"\bHTTP 5\d\d\b", str(e)))
+
+
+def explain(e, about: str = "") -> str:
     """What went wrong with an AI call, in words the owner can act on."""
     text, low = str(e), str(e).lower()
+    who = ALIASES.get(about, about) if about else provider()      # the service being asked about
+    service = PROVIDERS.get(who, ("The AI service",))[0]
     name = (models() or ["?"])[0]
     m = re.match(r"HTTP (\d{3})\b", text)
     status = m.group(1) if m else ""
+    if is_busy(e):
+        return f"{service} is very busy right now. Try again in a minute, or pick another model."
     if status in ("401", "403") or "api key" in low or "api_key" in low or "unauthorized" in low or "permission" in low:
-        return f"{label()} refused the key. Paste a working key under Settings, AI."
+        return f"{service} refused the key. Paste a working key on the AI page."
     if "no longer available" in low or "deprecated" in low or "retired" in low or "discontinued" in low:
-        return f"{label()} has retired \"{name}\" (or it isn't available to new keys). Open Settings, AI, press Find models and pick a newer model."
+        return f"{service} has retired \"{name}\" (or it isn't available to new keys). Open the AI page, press Find models and pick a newer model."
     # Only a 404 that is about a model says the model is unknown. A 400 like "API key not found" or a stray
     # "404" inside some other message must not be reported as an unknown model.
     if (status == "404" and "model" in low) or (not status and ("404" in text or "not found" in low or "does not exist" in low or "unknown model" in low or "not_found" in low)) \
             or (status and "is not found for api version" in low):
-        return f"{label()} doesn't know the model \"{name}\". Open Settings, AI, press Find models and pick one from the list."
+        return f"{service} doesn't know the model \"{name}\". Open the AI page, press Find models and pick one from the list."
     if "429" in text or "quota" in low or "rate limit" in low or "exhausted" in low:
-        return f"{label()} says the key has hit its limit or has no credit left. Check the account with {label()}, or try again later."
+        return f"{service} says the key has hit its limit or has no credit left. Check the account with {service}, or try again later."
     if "connect" in low or "timed out" in low or "timeout" in low or "getaddrinfo" in low or "refused" in low or "nodename" in low or "servname" in low or "nameresolutionerror" in low or "name resolution" in low:
-        return f"PeakCut couldn't reach {label()}. Check the internet connection" + (" and that Ollama is running." if provider() == "ollama" else ".")
+        return f"PeakCut couldn't reach {service}. Check the internet connection" + (" and that Ollama is running." if who == "ollama" else ".")
     return ""
 
 

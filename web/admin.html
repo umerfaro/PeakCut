@@ -342,7 +342,7 @@ function drawOverview(a) {
       <div class="card"><div class="card-head"><div><h2>AI calls</h2><p class="sub">Per day, last 30 days</p></div></div>${bars(a.daily, "calls", null, v => String(Math.round(v)), "AI calls per day", ["AI calls"])}</div>
       <div class="card"><div class="card-head"><div><h2>What the AI is used for</h2><p class="sub">All users, all time</p></div></div>${hbars(a.by_purpose, r => `${num(r[1])} call${r[1] === 1 ? "" : "s"} · ${kfmt(r[2])} tokens`)}</div>
     </div>
-      ${sv.ai_key ? "" : `<p class="note">No AI key is set, so clips are picked by loudness only. Add your own key in the app under Settings, AI, or in the .env file on the server (see .env.example).</p>`}`;
+      ${sv.ai_key ? "" : `<p class="note">No AI key is set, so no clips can be made. Add your own key in the app on the AI page (the AI card at the bottom of the sidebar), or in the .env file on the server (see .env.example).</p>`}`;
 }
 
 /* The accounts are searched, filtered and sorted on the server, across every account, 50 to a page. */

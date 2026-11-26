@@ -21,7 +21,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # straight from this machine; from this machine as another YouTube app (YouTube often still answers those); then
 # through each address in PEAKCUT_YT_PROXIES, if you set any (optional: proxies of your own, comma-separated). A way
 # that was refused is skipped for a few minutes. Only when every way is refused is the link turned away, with a
-# clear message. Saved YouTube cookies (Settings, Connected apps) are sent on every way.
+# clear message.
 YT_PAUSE = 600
 _yt_refused_until = 0.0
 _yt_section_slot = threading.Lock()
@@ -73,7 +73,7 @@ def _yt(url, work):
 
 _PROXY_DOWN = re.compile(r"Unable to connect to proxy|ProxyError|Tunnel connection failed|Connection refused", re.I)
 YT_BLOCKED = ("YouTube isn't letting PeakCut download videos right now. Upload the video file instead, or use a "
-              "Twitch or Kick link. An admin can fix this by adding YouTube cookies under Settings, Connected apps. "
+              "Twitch or Kick link. "
               "YouTube links will be tried again in a few minutes.")
 _BOT_CHECK = re.compile(r"not a bot|confirm you.?re not|sign in to confirm(?! your age)", re.I)
 # YouTube can also hand over the page and then refuse the video itself ("unable to download video data:
@@ -135,11 +135,6 @@ class _Quiet:
     def error(self, m): pass
 
 
-def cookie_opts() -> dict:
-    """The YouTube cookies an admin saved (Settings, Connected apps), if any. yt-dlp only sends them to YouTube."""
-    return {"cookiefile": str(config.YT_COOKIES)} if config.YT_COOKIES.is_file() else {}
-
-
 def ydl_base() -> dict:
     """Settings every yt-dlp call needs before it can see a real video file.
 
@@ -164,7 +159,7 @@ def _ydl(opts):
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
     return yt_dlp.YoutubeDL({**ydl_base(), "noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
                              "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 20,
-                             "concurrent_fragment_downloads": 4, **cookie_opts(), **opts})
+                             "concurrent_fragment_downloads": 4, **opts})
 
 
 def _video_format(height):

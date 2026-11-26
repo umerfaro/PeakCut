@@ -109,9 +109,12 @@ check("without punctuation, a pause counts as the end of a sentence", any(abs(e 
 import numpy as np
 db = np.zeros(30); db[13] = 9.0
 brain.ask_ai = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("The AI is not set up on this server."))
-clips, info = brain.find_clips(w, db, 30.0, max_clips=1, min_len=8, max_len=14, log=lambda m: None)
-ends = brain.sentence_ends(w)
-check("with no AI, a clip picked by loudness still ends on a sentence end", len(clips) == 1 and any(0 <= clips[0]["end"] - x <= 0.4 for x in ends))
+try:
+    brain.find_clips(w, db, 30.0, max_clips=1, min_len=8, max_len=14, log=lambda m: None)
+    got = "clips"
+except brain.NoAI:
+    got = "refused"
+check("with no AI, nothing is picked from the sound", got == "refused")
 
 # Reactions need the preceding action even when nobody speaks during it.
 words = [{"w": "Ready?", "s": 18, "e": 19}, {"w": "Wow!", "s": 30, "e": 31},

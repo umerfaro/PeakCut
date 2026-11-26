@@ -1,10 +1,11 @@
 """Clip anyway: when the AI finds nothing clip-worthy in a video, the person can ask again and get the best moments
-there are. The transcript is reused (not written again), the AI is told it must return moments, and if
-it still returns none the loudest stretches with speech are taken. With PEAKCUT_TIDY=1 a video with no clips keeps
+there are. The transcript is reused (not written again) and the AI is told it must return moments. Nothing is ever
+picked from the sound. With PEAKCUT_TIDY=1 a video with no clips keeps
 its source a few days so this works. The slow parts (video, audio, the AI) are replaced by stand-ins."""
 import json, os, sys, tempfile, time
 os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-anyway-")
-os.environ.update(DATABASE_URL="", PEAKCUT_VERIFY_EMAIL="0", PEAKCUT_KEEP_SOURCE="0", PEAKCUT_TIDY="1")
+os.environ.update(DATABASE_URL="", PEAKCUT_VERIFY_EMAIL="0", PEAKCUT_KEEP_SOURCE="0", PEAKCUT_TIDY="1",
+                  PEAKCUT_AI_PROVIDER="ollama", PEAKCUT_AI_MODELS="test-model", PEAKCUT_AI_BASE_URL="http://127.0.0.1:9/v1")
 sys.path.insert(0, ".")
 from pathlib import Path   # noqa: E402
 import numpy as np   # noqa: E402
@@ -21,7 +22,7 @@ def check(n, got, want=True):
 
 WORDS = [{"w": f"word{i}", "s": float(i), "e": float(i) + 0.8} for i in range(60)]
 
-# ---- the AI is told to return moments, and something always comes back
+# ---- the AI is told to return moments
 prompts = []
 brain.ask_ai = lambda prompt, schema=None, purpose="", **k: (prompts.append(prompt) or [], "test-model", 10)
 db_ = np.zeros(60); db_[30] = 30.0
@@ -30,7 +31,7 @@ check("normally, nothing worth clipping means no clips", none, [])
 check("...and the AI may say so", "Return [] if nothing is worth clipping" in prompts[-1])
 forced, _ = brain.find_clips(WORDS, db_, 60.0, "Title", "Someone", 2, 15, 30, force=True)
 check("Clip anyway tells the AI it must return moments", "Do NOT return []" in prompts[-1] and "Never return []" in prompts[-1])
-check("if the AI still returns none, the loudest stretch with speech is taken", len(forced) >= 1 and forced[0]["start"] <= 30 <= forced[0]["end"])
+check("if the AI still returns none, nothing is picked from the sound", forced, [])
 
 # ---- a person and a finished video with nothing clipped
 u, _ = auth._create("a@example.com", "a", password_hash="x")

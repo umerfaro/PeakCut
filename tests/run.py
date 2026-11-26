@@ -32,7 +32,9 @@ def main() -> int:
     log = data / "server.log"
     failed = []
     with log.open("w", encoding="utf-8") as out:
-        server = subprocess.Popen([sys.executable, "-m", "studio.server"], cwd=ROOT, env=env, stdout=out, stderr=subprocess.STDOUT)
+        # a stand-in AI: videos are only accepted with one set up, and nothing listens at this address
+        stand_in = {"PEAKCUT_AI_PROVIDER": "ollama", "PEAKCUT_AI_MODELS": "test-model", "PEAKCUT_AI_BASE_URL": "http://127.0.0.1:9/v1"}
+        server = subprocess.Popen([sys.executable, "-m", "studio.server"], cwd=ROOT, env={**env, **stand_in}, stdout=out, stderr=subprocess.STDOUT)
     try:
         for _ in range(90):
             try:
@@ -109,7 +111,9 @@ def main() -> int:
                 ("the speech machine starts fresh when its memory fills", ["tests/test_asr_worker.py"]),
                 ("the AI hears each decided clip (Gemini only); chat speed on Kick too", ["tests/test_listen.py"]),
                 ("live recording gets past the opening ad, and says when it is stuck", ["tests/test_live_recovery.py"]),
-                ("updating from an older PeakCut: everything is still there", ["tests/test_upgrade.py"])]
+                ("updating from an older PeakCut: everything is still there", ["tests/test_upgrade.py"]),
+                ("the app icon and the updated message", ["tests/test_app_icon.py"]),
+                ("no working AI key, no clipping", ["tests/test_need_key.py"])]
         for name, args in runs:
             print(f"\n=== {name} ===", flush=True)
             r = subprocess.run([sys.executable, *args], cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")

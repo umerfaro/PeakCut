@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from . import admin as admins
 from . import campaigns, discover
-from . import account, load
+from . import account, load, shortcut, updates
 from . import (accounts, ai, alerts, auth, composio_post, brain, config, creators, ctx, db, jobs, live, media, posting,
                profiles, render, safe, templates, transcribe, usage)
 
@@ -103,8 +103,8 @@ def _startup():
     jobs.start()
     live.start()
     posting.start()
-    from . import updates
-    updates.start()                  # looks for a newer PeakCut every minute, in the background
+    updates.note_version(used_before=any(config.USERS_DIR.glob("*/*")))
+    updates.start(idle=_nothing_running)   # looks for a newer PeakCut every minute, in the background
     discover.warm_up()
 
 
@@ -520,6 +520,67 @@ def admin_page(request: Request, rest: str = ""):
     return _page("admin.html")
 
 
+def _nothing_running() -> bool:
+    """No recording, video, clip or upload in progress: a safe moment to restart for an update."""
+    if live.active():
+        return False
+    for j in jobs.all_jobs():
+        if j["status"] in ("queued", "running") or any(k.get("status") in ("queued", "rendering") for k in j.get("clips", [])):
+            return False
+    try:
+        return not any(time.time() - f.stat().st_mtime < 120 for f in (config.TMP_DIR / "uploads").rglob("*"))
+    except OSError:
+        return True
+
+
+# ---------------------------------------------------------------- PeakCut as an app: an icon to open it, and closing it
+def _own_computer(request: Request):
+    _admin(request)
+    if config.ACCOUNTS or not _on_this_computer(request) or Path("/.dockerenv").exists():
+        raise HTTPException(409, "This only works on the computer PeakCut runs on.")
+
+
+@app.post("/api/app/shortcut")
+def app_shortcut(request: Request):
+    _own_computer(request)
+    try:
+        return {"made": shortcut.create(config.PORT)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, str(e)[:200] or "The icon couldn't be made.")
+
+
+@app.post("/api/app/quit")
+def app_quit(request: Request):
+    _own_computer(request)
+    if not _nothing_running():
+        raise HTTPException(409, "Something is still recording or being made. Stop it, or wait for it to finish.")
+    threading.Timer(1.0, os._exit, args=(0,)).start()
+    return {"ok": True}
+
+
+@app.post("/api/update/install")
+def update_install(request: Request):
+    _admin(request)
+    ok, why = updates.can_install()
+    if not ok:
+        raise HTTPException(409, why)
+    updates.install_soon()
+    return updates.state()
+
+
+@app.put("/api/update/auto")
+def update_auto(request: Request, body: dict = Body(...)):
+    _admin(request)
+    updates.set_auto(bool(body.get("on")))
+    return updates.state()
+
+
+@app.get("/api/update")
+def update_get(request: Request):
+    _admin(request)
+    return {**updates.state(), "found": updates.latest()}
+
+
 @app.get("/healthz")
 def healthz(request: Request):
     with db.engine.connect() as c:
@@ -698,9 +759,9 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
 @app.get("/api/status")
 def status(request: Request):
     from . import notices
-    from . import updates
     me_ = _me(request)
-    return {"user": auth.public(me_), "update": updates.latest() if me_.is_admin else None, "accounts": config.ACCOUNTS, "disk_full": load.disk_full(), "no_ffmpeg": bool(_tools.missing()), "links": {"repo": config.REPO_URL, "follow": config.FOLLOW_URL}, "ai": usage.brief(), "unread": notices.unread(),
+    return {"user": auth.public(me_), "update": updates.latest() if me_.is_admin else None, "updater": updates.state() if me_.is_admin and (updates.latest() or updates.auto_on()) else None,
+            "updated": updates.updated() if me_.is_admin else None, "accounts": config.ACCOUNTS, "disk_full": load.disk_full(), "no_ffmpeg": bool(_tools.missing()), "links": {"repo": config.REPO_URL, "follow": config.FOLLOW_URL}, "ai": usage.brief(), "unread": notices.unread(),
             "tour": not accounts.settings()["tour_done"], "ask_rating": _ask_rating(),
             "composio": accounts.composio_for_me(), "youtube": accounts.youtube_ready(), "connect": {p: accounts.can_connect(p) and (accounts.app_open(p) or bool(getattr(me_, "is_admin", False))) for p in accounts.PLATFORM_NAMES}, "open": {p: accounts.can_connect(p) and accounts.app_open(p) for p in accounts.PLATFORM_NAMES}, "max_upload_mb": config.MAX_UPLOAD_MB, "upload_part_mb": config.UPLOAD_PART_MB, "max_batch": config.MAX_ACTIVE_JOBS_PER_USER,
             "styles": {k: v["label"] for k, v in render.STYLES.items()}, "layouts": render.LAYOUTS, "speech": _speech_brief(),
@@ -882,10 +943,19 @@ def link_preview(request: Request, url: str = ""):
         raise HTTPException(422, "Couldn't open that video. Check the link is public and complete.")
 
 
+def _need_ai():
+    """No working AI key, no clipping."""
+    try:
+        brain.require_ai()
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
 @app.post("/api/jobs")
 def create_from_link(body: dict = Body(...)):
     _need_verified()
     _quota()
+    _need_ai()                                   # no working AI key, no clipping
     _throttle("newjob:" + ctx.uid(), 30, 600)
     url = str(body.get("url", "")).strip()[:500]
     if not media.site_allowed(url):
@@ -931,6 +1001,7 @@ def _upload_name(raw) -> tuple:
 @app.post("/api/upload")
 def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), creator: str = Form("")):
     _need_verified()
+    _need_ai()
     _job_slots()
     name, ext = _upload_name(file.filename)
     if ext not in VIDEO_TYPES:
@@ -1033,6 +1104,7 @@ def upload_start(body: dict = Body(...)):
     _need_verified()
     _job_slots()
     _quota()
+    _need_ai()                                   # no working AI key, no clipping
     _throttle("upstart:" + ctx.uid(), 30, 600)
     name, ext = _upload_name(body.get("name"))
     if ext not in VIDEO_TYPES:
@@ -1175,6 +1247,7 @@ def clip_anyway(jid: str):
     if (job.get("source") or {}).get("type") != "url" and not jobs._source_files(job):
         raise HTTPException(400, "The original upload is no longer on our server. Upload the video again to clip it.")
     _job_slots()
+    _need_ai()
     job["options"]["force"] = True
     job.update(status="queued", stage="Waiting to look again", progress=0.0, error=None)
     jobs.enqueue(job)
@@ -2055,6 +2128,7 @@ def reschedule_posts(cid: str):
 @app.post("/api/creators/{cid}/live")
 def go_live(cid: str, body: dict = Body(default={})):
     _need_verified()
+    _need_ai()
     try:
         c = creators.get(cid)
     except ValueError:
@@ -2141,6 +2215,15 @@ def ai_put(request: Request, body: dict = Body(...)):
     return out
 
 
+@app.delete("/api/ai/key")
+def ai_remove_key(request: Request):
+    _admin(request)
+    out = ai.remove_key()
+    usage.forget_all()
+    ctx.bump()
+    return out
+
+
 @app.post("/api/ai/models")
 def ai_models(request: Request, body: dict = Body(default={})):
     _admin(request)
@@ -2150,9 +2233,9 @@ def ai_models(request: Request, body: dict = Body(default={})):
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
-        reason = ai.explain(e)
+        reason = ai.explain(e, str(body.get("provider") or ""))
         raise HTTPException(502, f"The service did not give its list of models. {reason}" if reason else
-                            "The service did not give its list of models. Check the key, or type the model yourself. " + _ai_error(e)[:160])
+                            "The service did not give its list of models. Check the key, or type the model yourself.")
 
 
 @app.post("/api/ai/test")
@@ -2164,7 +2247,7 @@ def ai_test(request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, ai.explain(e) or "The AI did not answer: " + _ai_error(e))
+        raise HTTPException(502, ai.explain(e) or "The AI did not answer. Check the key and the model, then try again.")
 
 
 # ---------------------------------------------------------------- speech models, one per spoken language
@@ -2415,34 +2498,6 @@ def apps_put(request: Request, body: dict = Body(...)):
         raise HTTPException(400, str(e))
 
 
-# ---------------------------------------------------------------- YouTube cookies, for servers YouTube refuses
-# A secret like a password: it is saved to a file only this server reads, and never sent back to the page.
-@app.get("/api/youtube-cookies")
-def yt_cookies_get(request: Request):
-    _admin(request)
-    f = config.YT_COOKIES
-    return {"saved": f.is_file(), "updated": int(f.stat().st_mtime) if f.is_file() else 0}
-
-
-@app.put("/api/youtube-cookies")
-def yt_cookies_put(request: Request, body: dict = Body(...)):
-    _admin(request)
-    f, text = config.YT_COOKIES, str(body.get("text") or "")
-    if body.get("remove"):
-        f.unlink(missing_ok=True)
-    else:
-        rows = [l.split("\t") for l in text.splitlines() if l.strip() and not l.startswith("# ")]
-        if len(text) > 1_000_000 or not any(len(r) == 7 and "youtube.com" in r[0] for r in rows):
-            raise HTTPException(400, "That doesn't look like a cookies.txt file with YouTube cookies in it. Export it "
-                                     "from a browser signed in to YouTube, with an extension such as \"Get cookies.txt LOCALLY\".")
-        text = text if text.startswith("# Netscape") else "# Netscape HTTP Cookie File\n" + text
-        f.write_text(text, encoding="utf-8")
-        with contextlib.suppress(OSError):
-            f.chmod(0o600)
-    media._yt_refused_until = 0.0        # try YouTube again straight away
-    return yt_cookies_get(request)
-
-
 @app.post("/api/posts")
 def add_posts(body: dict = Body(...)):
     job = jobs.get(str(body.get("job")))
@@ -2559,7 +2614,26 @@ def admin_delete_user(request: Request, uid: str, body: dict = Body(...)):
     return {"ok": True}
 
 
+def _wait_for_port(seconds: int = 40):
+    """After an update the old PeakCut is still closing: wait until its address is free."""
+    import socket
+    until = time.time() + seconds
+    while time.time() < until:
+        s = socket.socket(socket.AF_INET6 if ":" in config.HOST else socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if os.name != "nt":
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((config.HOST, config.PORT))
+            return
+        except OSError:
+            time.sleep(1)
+        finally:
+            s.close()
+
+
 def main():
+    if os.environ.pop("PEAKCUT_RESTARTING", ""):
+        _wait_for_port()
     print(f"\n  PeakCut is running:  {config.PUBLIC_URL}\n")
     if not config.ACCOUNTS and (config.HTTPS or config.HOST not in ("127.0.0.1", "localhost", "::1")):
         print("  Sign-in is off, so anyone who can reach this address can use PeakCut and its AI key.\n"

@@ -144,8 +144,6 @@ FONTS_DIR = DATA_DIR / "fonts"          # caption fonts, copied from studio/font
 # clips (seconds instead of transcribing hours), and our own model is run only on the clips themselves.
 YT_TRANSCRIPT = env("PEAKCUT_YT_TRANSCRIPT", "1") != "0"
 # YouTube often refuses servers in data centres ("sign in to confirm you're not a bot"). Cookies from a signed-in
-# YouTube account get past that: an admin pastes them under Settings, Connected apps, and they are kept in this file.
-YT_COOKIES = Path(env("PEAKCUT_YT_COOKIES") or DATA_DIR / "youtube-cookies.txt")
 # Optional: other addresses YouTube can be reached through when it refuses this machine (proxies you run yourself,
 # comma separated, like http://10.0.0.4:8888). Tried in order after this machine's own ways. Empty: none.
 YT_PROXIES = [p.strip() for p in env("PEAKCUT_YT_PROXIES", "").split(",") if p.strip()]
@@ -238,7 +236,7 @@ ALLOWED_SITES = tuple(s.strip().lower() for s in env(
     "PEAKCUT_ALLOWED_SITES", "youtube.com,youtu.be,twitch.tv,kick.com").split(",") if s.strip())
 
 # ---------------------------------------------------------------- AI (bring your own key: see studio/ai.py)
-# These are the starting values. Whatever is saved from the dashboard (Settings, AI) is used instead.
+# These are the starting values. Whatever is saved from the dashboard (the AI page) is used instead.
 AI_PROVIDER = env("PEAKCUT_AI_PROVIDER", "gemini").strip().lower()            # gemini, openai, xai, groq, openrouter, anthropic, ollama, custom
 AI_MODELS = [m.strip() for m in env("PEAKCUT_AI_MODELS", "").split(",") if m.strip()]   # tried in this order
 AI_BASE_URL = env("PEAKCUT_AI_BASE_URL", "").rstrip("/")                      # only for "custom", or to override a provider's address
@@ -303,7 +301,7 @@ OUT_W, OUT_H, OUT_FPS = 1080, 1920, 30
 
 # The release people are told about: the What's new pop-up (web/index.html WN_VER is the same string), the bell
 # notice every account gets once, and the "new version" note an open page shows when it is older than this.
-RELEASE = "2026-11-25"
+RELEASE = "2026-11-26"
 RELEASE_NOTICE = env("PEAKCUT_RELEASE_NOTICE", "1") == "1"
 
 # https served by PeakCut itself, without a web server in front: both files set, and the site answers on https.

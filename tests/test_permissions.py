@@ -45,7 +45,7 @@ b, ub = signup("bob@example.com")
 # ---- nobody is an admin by signing up, whatever they send
 check("first account is a normal user", ua["role"], "user")
 check("is_admin in signup body ignored", ua["is_admin"], False)
-check("no AI key: the app still answers, and says so", a.get("/api/status").json()["ai"]["ready"], False)
+check("the app says whether the AI is set up (the test copy has a stand-in)", a.get("/api/status").json()["ai"]["ready"], True)
 
 # ---- the admin area does not exist for them
 for who, c in (("anon", anon), ("user", a)):

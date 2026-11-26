@@ -312,7 +312,7 @@ def ask_ai(prompt, schema=None, purpose="AI call", timeout=None, audio=None, tem
             return out, model, sent + wrote
     ai.note_problem(last)
     _provider_trouble(last)
-    raise RuntimeError(f"The AI did not answer: {ai.explain(last) or last}")
+    raise RuntimeError(f"The AI did not answer. {ai.explain(last) or 'Check the AI page, then try again.'}")
 
 
 def _provider_trouble(e):
@@ -330,7 +330,7 @@ def _provider_trouble(e):
         why = ai.explain(e) or text[:200]
         alerts.admins("ai-provider", "The AI stopped working: no clips can be picked",
                       f"{ai.label() or 'The AI service'} is refusing PeakCut's calls. {why} Recordings and uploads keep "
-                      "running, but no clips are picked or captioned by the AI until this is fixed (Settings, AI).",
+                      "running, but no clips are picked or captioned by the AI until this is fixed (the AI page).",
                       )
     except Exception:  # noqa: BLE001 - telling the admins must never break the job
         pass
@@ -391,23 +391,23 @@ def _snap(clip, lines, words, min_len, max_len, duration, context=0):
     return round(start, 2), round(end, 2)
 
 
-def fallback_by_loudness(db, words, n, max_len, duration):
-    """No AI available: take the loudest stretches that contain speech."""
-    z = loud_zscore(db)
-    picks, order = [], np.argsort(-z)
-    for sec in order:
-        s = max(0.0, float(sec) - max_len * 0.6)
-        e = min(duration, s + max_len)
-        if any(not (e <= p["start"] or s >= p["end"]) for p in picks):
-            continue
-        if not any(s <= w["s"] <= e for w in words):
-            continue
-        picks.append({"start": s, "end": e, "score": 50, "category": "other", "hook": "Wait for it 👀",
-                      "title": "Loud moment", "description": "", "hashtags": [], "highlight_words": [],
-                      "reason": "Picked by loudness because the AI was unavailable."})
-        if len(picks) >= n:
-            break
-    return picks
+NEED_KEY = "Add your AI key first (the AI page, at the bottom of the sidebar). PeakCut needs it to find the moments."
+
+
+class NoAI(RuntimeError):
+    """The AI can't be used, so no moments can be picked. PeakCut does not guess them from the sound."""
+
+
+def require_ai():
+    """Called before a video or a recording starts: there has to be a key, and if the AI failed lately it has to
+    answer one tiny request now. Raises ValueError with what to do."""
+    if not config.ai_ready():
+        raise ValueError(NEED_KEY)
+    if ai.problem["text"]:
+        try:
+            ai.test()
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"The AI isn't working, so nothing was started. {ai.explain(e) or ai.problem['text']}") from e
 
 
 def _game_rules(game):
@@ -428,14 +428,15 @@ even if they are only mildly good. Still start on a full sentence and end after 
 
 def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=15, max_len=60, log=print, game=None,
                force=False, focus=""):
-    """The best moments of a video. With force, the AI must return its best moments instead of none, and if it
-    still returns nothing, the loudest stretches with speech are taken. `focus`: what the person clipping wants
-    (a campaign's "what to look for"); `game`: the game being played, for its own rules and tags."""
+    """The best moments of a video, picked by the AI. With force, it is asked to return its best moments instead of
+    none. Raises NoAI when it could not be reached at all. `focus`: what the person clipping wants (a campaign's
+    "what to look for"); `game`: the game being played, for its own rules and tags."""
     z = loud_zscore(db)
     lines = make_lines(words, z)
     if not lines:
         return [], {"model": None, "note": "No speech found."}
     found, used_model, tokens = [], None, 0
+    failed, why = 0, ""
     t = 0.0
     windows = []
     while t < duration:
@@ -467,16 +468,11 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
             out = out if isinstance(out, list) else [out] if isinstance(out, dict) else []
             found += [c for c in out if isinstance(c, dict) and a - 5 <= _num(c.get("start"), -1) < b]
         except Exception as e:  # noqa: BLE001
+            failed, why = failed + 1, str(e)
             log(f"AI window {a:.0f}-{b:.0f}s failed: {e}")
-    note = ""
-    if not used_model:
-        found = fallback_by_loudness(db, words, max_clips, max_len, duration)
-        note = "The AI was unavailable, so clips were picked by loudness only."
-    elif force and not found:
-        found = fallback_by_loudness(db, words, max_clips, max_len, duration)
-        for c in found:
-            c.update(reason="Picked by loudness: you asked for clips, and the AI found nothing it rated.", hook="You have to see this 👀",
-                     title=(title or "Best moment")[:70])
+    if failed and not used_model:
+        raise NoAI(f"{why[:300]}")
+    note = "Part of the video was skipped because the AI didn't answer." if failed else ""
     clips = []
     for c in sorted(found, key=lambda c: -_num(c.get("score"))):
         s, e = _snap(c, lines, words, min_len, max_len, duration, context=10 if used_model else 0)

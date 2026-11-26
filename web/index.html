@@ -83,7 +83,15 @@ main{background:var(--bg);margin:8px 8px 8px 0;border-radius:var(--r-lg);height:
 .upd h3{font-size:13px;font-weight:600;color:var(--brand-ink);margin:0}
 .vb{display:flex;align-items:center;gap:12px;margin:12px 28px 0;padding:12px 12px 12px 16px;border-radius:12px;background:#FFF4E6;color:#7A3E0C;font-size:14px;animation:rise .3s ease both}
 .vb svg{width:18px;height:18px;flex:none;color:var(--brand-deep)}
-.vb span{flex:1;min-width:0}
+.vb span:not(.spin){flex:1;min-width:0}
+.vb.ok{background:var(--good-soft);color:#0B6B44}.vb.ok b,.vb.ok svg{color:#0B6B44}
+.updcard{position:fixed;inset:0;z-index:2000;display:grid;place-items:center;padding:20px;background:rgba(33,24,19,.55)}
+.updbox{width:min(420px,100%);padding:28px;border-radius:16px;background:#fff;text-align:center}
+.updbox h2{margin:0 0 6px;font-size:19px;color:var(--brand-ink)}
+.updbox p{margin:0 0 18px;font-size:14px;color:var(--dim)}
+.updbar{height:10px;border-radius:999px;background:var(--muted);overflow:hidden}
+.updbar i{display:block;height:100%;width:0;border-radius:999px;background:var(--brand);transition:width .8s ease}
+.updbox small{display:block;margin-top:12px;font-size:12px;color:var(--faint)}
 .vb b{color:#5A2C06}
 @media (max-width:640px){.vb{margin:10px 16px 0;flex-wrap:wrap}}
 .topbar .titles{flex:1;min-width:0}
@@ -465,6 +473,51 @@ img.av{object-fit:cover}
 .set-link:hover{background:var(--muted)}
 .set-link.on{background:var(--brand-soft)}.set-link.on svg{color:var(--brand-deep)}.set-link.on b{color:var(--brand-ink)}
 .set-body{min-width:0;animation:rise .25s ease both}
+.ai-key .card-head{align-items:flex-start;gap:16px}
+.ai-key .card-head .pill{flex:none}
+.ai-key .sub a{color:var(--brand-deep);font-weight:600}.ai-key .sub a:hover{color:var(--brand-ink)}
+.ai-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;align-items:end}
+.ai-row .f{display:flex;flex-direction:column;gap:7px;min-width:0;font-size:12px;color:var(--dim);font-weight:600}
+.ai-row input:not([type=hidden]){width:100%;height:42px}
+.free-dlg{width:min(560px,92vw)}
+.free-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+.free-top h2{margin:0;font-size:17px}
+.free-list{display:grid;max-height:60vh;overflow:auto}
+.free-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}
+.free-row:last-child{border-bottom:0}
+.free-row b{display:block;font-size:13.5px;color:var(--text)}
+.free-row span{display:block;margin-top:2px;font-size:12.5px;line-height:1.45;color:var(--dim)}
+.free-act{display:flex;align-items:center;gap:12px;flex:none;font-size:12.5px}
+a.ai-link{text-decoration:none}
+.ai-keybox{position:relative;display:block}
+.ai-keybox:has(.ai-remove) input{padding-right:88px}
+.ai-remove{position:absolute;top:6px;right:6px;height:30px;padding:0 10px;border:0;border-radius:7px;background:var(--bad-soft);color:var(--bad);font:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:background-color .15s ease,color .15s ease}
+.ai-remove:hover,.ai-remove:focus-visible{background:var(--bad);color:#fff}
+.ai-row input.ai-saved::placeholder{color:var(--text);letter-spacing:1px;opacity:1}
+.dd{position:relative}
+.dd-btn{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;height:42px;padding:0 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;font-size:13.5px;font-weight:600;text-align:left;cursor:pointer;transition:background-color .15s ease,border-color .15s ease}
+.dd-btn span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-btn svg{flex:none;width:14px;height:14px;color:var(--dim)}
+.dd-btn:hover:not(:disabled){background:var(--muted)}
+.dd-btn:disabled{color:var(--faint);cursor:default}
+.dd.open .dd-btn,.dd-btn:focus-visible{border-color:var(--brand)}
+.dd.open .dd-btn svg{transform:rotate(180deg)}
+.dd-menu{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:40;min-width:100%;width:max-content;max-width:min(340px,86vw);max-height:280px;overflow:auto;padding:6px;border:1px solid var(--line-2);border-radius:12px;background:var(--bg)}
+.dd.open .dd-menu{display:block}
+.dd[data-dd=model] .dd-menu{left:auto;right:0}
+.dd-opt{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:8px;background:transparent;color:var(--text);font:inherit;font-size:13px;font-weight:500;text-align:left;cursor:pointer;transition:background-color .15s ease,color .15s ease}
+.dd-opt span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dd-opt:hover,.dd-opt:focus-visible{background:var(--muted)}
+.dd-opt[aria-selected=true]{background:var(--brand-soft);color:var(--brand-ink);font-weight:600}
+.dd-opt svg{flex:none;width:15px;height:15px;color:var(--brand-deep)}
+.dd-opt em{flex:none;padding:2px 8px;border-radius:999px;background:var(--good-soft);color:var(--good);font-size:11px;font-style:normal;font-weight:600}
+.ai-row>.btn{height:42px;justify-self:start}
+.ai-check{display:flex;align-items:center;gap:7px;margin-top:10px;font-size:12.5px;font-weight:600;color:var(--dim)}
+.ai-check:empty{display:none}
+.ai-check svg{width:15px;height:15px;flex:none}
+.ai-check.ok{color:var(--good)}.ai-check.bad{color:var(--bad);font-weight:500}
+.ai-link{padding:0;border:0;background:none;color:var(--brand-deep);font:inherit;font-weight:600;cursor:pointer;transition:color .15s ease}
+.ai-link:hover,.ai-link:focus-visible{color:var(--brand-ink)}
 .ai-form{display:grid;gap:18px;max-width:560px}
 .ai-form select{width:100%}
 .ai-form .with{display:flex;gap:8px}.ai-form .with input{flex:1;min-width:0}
@@ -2472,10 +2525,10 @@ function aiCard() {
   const k = S.status.ai; if (!k) return "";
   return `<div class="card ai-home"><h2>AI</h2>
     <div class="ai-big">${k.ready ? esc(k.provider || "Ready") : "Not set up"}</div>
-    <p class="ai-sub">${k.ready ? esc(k.model || "") : "Clips are picked by loudness until an AI key is added."}</p>
+    <p class="ai-sub">${k.ready ? esc(k.model || "") : "PeakCut needs a working AI key to make clips."}</p>
     <div class="ai-stats"><div><b>${(k.today_calls || 0).toLocaleString()}</b><span>AI calls today</span></div>
       <div><b>${fmtK(k.today_tokens)}</b><span>Tokens today</span></div></div>
-    <div class="row">${!k.ready && S.status.user?.is_admin ? `<button class="btn primary" data-act="go" data-v="settings" data-tab="ai">${ic("plus")}Add AI key</button>` : ""}<button class="btn" data-act="go" data-v="usage">View usage ${ic("arrowr")}</button></div></div>`;
+    <div class="row">${!k.ready && S.status.user?.is_admin ? `<button class="btn primary" data-act="go" data-v="usage">${ic("plus")}Add AI key</button>` : ""}<button class="btn" data-act="go" data-v="usage">View usage ${ic("arrowr")}</button></div></div>`;
 }
 const PLAT = {
   youtube: {name: "YouTube", bg: "#FF0000", fg: "#fff", hint: "https://www.youtube.com/@name",
@@ -2530,12 +2583,16 @@ function playerSrc(k, e) {
   if (k === "kick") return `https://player.kick.com/${encodeURIComponent(e)}?muted=true&autoplay=true`;
   return "";
 }
-// YouTube wouldn't hand a video over: a next step, not an error. If the video is yours (or you may use it), get the
-// file yourself, for example from YouTube Studio, and it comes back through the normal upload with the same settings.
+// YouTube wouldn't hand a video over: a next step, not an error. The same link with "ss" before youtube.com opens a
+// download page for that exact video; the downloaded file comes back through the normal upload.
+const ytId = u => { try { const x = new URL(u); return x.hostname.endsWith("youtu.be") ? x.pathname.slice(1).split("/")[0]
+  : x.searchParams.get("v") || (x.pathname.match(/^\/(?:live|shorts|embed)\/([\w-]{6,})/) || [])[1] || ""; } catch { return ""; } };
+const ssLink = u => { const id = ytId(u); return id ? `https://www.ssyoutube.com/watch?v=${encodeURIComponent(id)}` : u.replace(/\/\/(www\.|m\.)?youtube\.com/, "//www.ssyoutube.com"); };
 const isYtRefused = j => /^YouTube (didn't hand|isn't letting)/.test(j.error || "") && j.source?.type === "url";
 const getVid = j => `<div class="getvid"><span class="nc-ic">${ic("down")}</span><div><b>One quick step to get this video</b>
-    <span>YouTube didn't hand this one over to this computer. If you have the video file (for your own videos, YouTube Studio lets you download it), upload it here. Your settings stay the same. An admin can also add YouTube cookies in Settings, Connected apps.</span></div>
-  <div class="gv-act"><button class="btn primary" data-act="regetfile" data-j="${esc(j.id)}">${ic("up")}Upload the file</button></div></div>`;
+    <span>YouTube didn't hand this one over. Download it in one click, then upload the file here. Your settings stay the same.</span></div>
+  <div class="gv-act"><a class="btn" href="${ssLink(j.source.url)}" target="_blank" rel="noopener noreferrer">${ic("down")}Download video</a>
+    <button class="btn primary" data-act="regetfile" data-j="${esc(j.id)}">${ic("up")}Upload it</button></div></div>`;
 // Posting needs at least one platform's app set up on this server (Settings, Connected apps, by an admin). Until then
 // people who aren't admins see a short note instead of posting controls; the admin sees how to set it up.
 const postSoon = () => !S.status.user?.is_admin && !Object.values(S.status.connect || {}).some(Boolean);
@@ -2626,7 +2683,7 @@ function openAcct() {
   const u = S.status.user;
   const on = S.status.accounts !== false;
   p.innerHTML = `${on ? `<div class="who2"><b>${esc(u.name)}</b><span>${esc(u.email)}</span></div>` : ""}
-    <button data-act="go" data-v="styles">${ic("film")}Styles</button><button data-act="go" data-v="settings">${ic("cog")}Settings</button><button data-act="go" data-v="usage">${ic("chart")}AI usage</button><button data-act="tour">${ic("play")}Take the tour</button>${S.status.links?.follow ? `<button data-act="feedback">${ic("chat")}Send feedback</button>` : ""}
+    <button data-act="go" data-v="settings">${ic("cog")}Settings</button><button data-act="go" data-v="styles">${ic("film")}Styles</button><button data-act="go" data-v="usage">${ic("bolt")}AI</button><button data-act="tour">${ic("play")}Take the tour</button>${S.status.links?.follow ? `<button data-act="feedback">${ic("chat")}Send feedback</button>` : ""}
     ${on ? `<button class="danger" data-act="logout">${ic("signout")}Sign out</button>` : ""}`;
   openPop(p, $("[data-act=acctmenu]"));
 }
@@ -2678,6 +2735,36 @@ async function openFeedback(kind = "bug", context = "") {
   if (context) { try { await navigator.clipboard.writeText(context); toast("The problem is copied. Paste it in your message.", "ok"); } catch {} }
   window.open(url, "_blank", "noopener");
 }
+// while PeakCut updates itself: say what it is doing, and load the page again once the new version answers
+function updShow(doing, pct) {
+  let el = $("#updcard");
+  if (!el) {
+    el = document.createElement("div"); el.id = "updcard"; el.className = "updcard";
+    el.innerHTML = `<div class="updbox" role="status" aria-live="polite"><h2>Updating PeakCut</h2><p></p><div class="updbar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><small></small></div>`;
+    document.body.appendChild(el);
+  }
+  el.querySelector("p").textContent = doing + "…";
+  el.querySelector("i").style.width = pct + "%";
+  el.querySelector(".updbar").setAttribute("aria-valuenow", pct);
+  el.querySelector("small").textContent = pct + "% · Your videos and settings stay as they are.";
+}
+function updHide() { $("#updcard")?.remove(); clearInterval(S.updTimer); S.updTimer = null; }
+function updWatch() {
+  if (S.updTimer) return;
+  let gone = false, pct = 5, doing = "Getting ready";
+  updShow(doing, pct);
+  S.updTimer = setInterval(async () => {
+    let st;
+    try { const r = await fetch("/api/update", {headers: {"Accept": "application/json"}}); if (!r.ok) throw 0; st = await r.json(); }
+    catch { gone = true; pct = Math.min(97, pct + 1); return updShow("Restarting PeakCut", pct); }
+    if (gone) { updShow("Done", 100); clearInterval(S.updTimer); return setTimeout(() => location.reload(), 700); }
+    if (st.error) { updHide(); return toast("The update didn't work, so PeakCut stayed on this version. " + st.error, "bad"); }
+    if (!st.doing) { updHide(); return; }
+    doing = st.doing; pct = Math.max(pct, st.percent || 0);
+    pct = Math.min((st.percent || pct) + 12, pct + 1);          // keeps moving inside a long step, never past the next
+    updShow(doing, pct);
+  }, 1500);
+}
 function updateHow() {
   const up = S.status?.update, d = $("#formdlg"); if (!up || d.open) return;
   const ai = "Update this PeakCut folder to the latest version from GitHub (git pull), keep my .env and data folder as they are, install any new requirements, and restart PeakCut. Read AGENTS.md first: if this folder's path is long or inside a temporary or assistant workspace, ask me before moving it to a short folder like C:\\peakcut, and never delete anything without asking.";
@@ -2687,7 +2774,7 @@ function updateHow() {
     ${up.notes.length ? `<ul>${up.notes.map(n => `<li>${esc(n.title)} <small>${esc(n.date)}</small></li>`).join("")}</ul>` : ""}
     ${up.restart ? "" : cmd("Ask your AI coding assistant (Claude, Cursor, Copilot...)", ai) + cmd("Or run it yourself, in the PeakCut folder", "git pull && pip install -r requirements.txt")}
     <p class="sub">${up.restart ? "" : "Then stop PeakCut and start it again. With Docker, run <code>git pull && docker compose up -d --build</code> instead. "}<a class="lnk" href="${esc(up.url)}" target="_blank" rel="noopener">See every change on GitHub</a></p>
-    <div class="dlg-foot"><button class="btn" value="later">Remind me next version</button><button class="btn primary" value="ok" autofocus>Got it</button></div></form>`;
+    <div class="dlg-foot"><button class="btn" value="later">Remind me next version</button>${S.status.updater?.can ? `<button class="btn" value="ok">Close</button><button class="btn primary" type="button" data-act="updnow" autofocus>Update now</button>` : `<button class="btn primary" value="ok" autofocus>Got it</button>`}</div></form>`;
   d.onclose = () => { if (d.returnValue === "later") { try { localStorage.setItem("peakcut_update_seen", up.latest); } catch {} drawShell(); } };
   d.returnValue = "ok"; d.showModal();
 }
@@ -2736,8 +2823,8 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
       <button class="icon-btn bell" data-act="bell" title="Notifications" aria-label="Notifications${S.status.unread ? `, ${S.status.unread} new` : ""}" aria-haspopup="dialog">${ic("bell")}${S.status.unread ? `<span class="dotn">${S.status.unread > 9 ? "9+" : S.status.unread}</span>` : ""}</button></div>` : ""));
   const c = creator();
   const recording = S.creators.filter(x => x.live_job).length;
-  let title = {overview:"Home", library:"All videos", settings:"Settings", styles:"Styles", usage:"AI usage", discover:"Streamers", campaigns:"Campaigns", schedule:"Schedule", updates:"What's new"}[S.view] || "", sub = "", act = "";
-  if (S.view === "usage") sub = "What the AI has been used for.";
+  let title = {overview:"Home", library:"All videos", settings:"Settings", styles:"Styles", usage:"AI", discover:"Streamers", campaigns:"Campaigns", schedule:"Schedule", updates:"What's new"}[S.view] || "", sub = "", act = "";
+  if (S.view === "usage") sub = "Your AI service and key, and what the AI has been used for.";
   if (S.view === "campaigns") sub = "Brands pay you per view.";
   if (S.view === "discover") sub = "Clipped live, 24/7.";
   if (S.view === "schedule") sub = "When your clips go out.";
@@ -2776,13 +2863,19 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
   const up = S.status.update;
   let upSeen = "";
   try { upSeen = localStorage.getItem("peakcut_update_seen") || ""; } catch {}
-  const upBar = up && up.latest !== upSeen ? `<div class="vb" role="status">${ic("up")}<span>${up.restart ? "<b>The new version is downloaded.</b> Close PeakCut and start it again to use it." : `A new version of PeakCut is out${up.behind ? `: <b>${up.behind} update${up.behind === 1 ? "" : "s"}</b> since yours` : ""}.`}</span>
-    <button class="btn sm primary" data-act="updhow">${up.restart ? "What's new" : "How to update"}</button><button class="btn sm ghost" data-act="updlater" aria-label="Hide until the next version">Later</button></div>` : "";
+  const upd = S.status.updater;
+  if (upd?.doing) updWatch();
+  const done = S.status.updated;
+  let doneSeen = "";
+  try { doneSeen = localStorage.getItem("peakcut_updated_seen") || ""; } catch {}
+  const upBar = done && done.version !== doneSeen ? `<div class="vb ok" role="status">${ic("check")}<span><b>PeakCut is updated</b> to the latest version (${esc(done.version)}).</span><button class="btn sm primary" data-act="updseen">Got it</button></div>`
+    : up && !upd?.doing && up.latest !== upSeen ? `<div class="vb" role="status">${ic("up")}<span>${up.restart ? "<b>The new version is downloaded.</b> Close PeakCut and start it again to use it." : `A new version of PeakCut is out${up.behind ? `: <b>${up.behind} update${up.behind === 1 ? "" : "s"}</b> since yours` : ""}.`}</span>
+    ${upd?.can ? `<button class="btn sm primary" data-act="updnow">Update now</button><button class="btn sm" data-act="updhow">What's new</button>` : `<button class="btn sm primary" data-act="updhow">${up.restart ? "What's new" : "How to update"}</button>`}<button class="btn sm ghost" data-act="updlater" aria-label="Hide until the next version">Later</button></div>` : "";
   const toolBar = S.status.no_ffmpeg ? `<div class="vb" role="alert">${ic("warn")}<span><b>PeakCut can't make clips yet: ffmpeg isn't installed on this computer.</b> Open a terminal, run <code>winget install Gyan.FFmpeg</code> (Mac: <code>brew install ffmpeg</code>, Linux: <code>sudo apt install ffmpeg</code>), then close PeakCut and start it again.</span></div>` : "";
-  const aiBar = !toolBar && S.status.ai?.problem && me?.is_admin && S.view !== "settings" ? `<div class="vb" role="status">${ic("warn")}<span><b>The AI isn't answering.</b> ${esc(S.status.ai.problem)} Until then, clips are picked by loudness.</span><button class="btn sm primary" data-act="go" data-v="settings" data-tab="ai">Open AI settings</button></div>` : "";
+  const aiBar = !toolBar && S.status.ai?.problem && me?.is_admin && S.view !== "usage" ? `<div class="vb" role="status">${ic("warn")}<span><b>The AI isn't answering.</b> ${esc(S.status.ai.problem)} PeakCut can't pick clips until this is fixed.</span><button class="btn sm primary" data-act="go" data-v="usage">Open AI</button></div>` : "";
   const diskBar = !toolBar && S.status.disk_full && S.view !== "settings" ? `<div class="vb" role="alert">${ic("warn")}<span><b>The drive PeakCut saves to is almost full, so it can't take new videos.</b> Free up space on it, or move PeakCut's folder to a bigger drive.</span>${me?.is_admin ? `<button class="btn sm primary" data-act="go" data-v="settings" data-tab="storage">Open Storage</button>` : ""}</div>` : "";
   put($("#vbanner"), toolBar ? toolBar : diskBar ? diskBar : aiBar ? aiBar : upBar ? upBar : me && me.verified === false ? `<div class="vb" role="status">${ic("warn")}<span>Confirm your email to start clipping. We sent a link to <b>${esc(me.email)}</b>.</span><button class="btn sm" data-act="resendverify">Send a new link</button></div>`
-    : kk && kk.ready === false && S.view !== "usage" ? `<div class="vb" role="status">${ic("bolt")}<span>${me?.is_admin ? "Add your AI key to let the AI pick clips and write titles. Until then, clips are picked by loudness." : "The AI isn't set up on this server yet, so clips are picked by loudness."}</span>${me?.is_admin && S.view !== "settings" ? `<button class="btn sm primary" data-act="go" data-v="settings" data-tab="ai">${ic("plus")}Add AI key</button>` : ""}</div>` : "");
+    : kk && kk.ready === false && S.view !== "usage" ? `<div class="vb" role="status">${ic("bolt")}<span>${me?.is_admin ? "Add your AI key. PeakCut can't make clips or record until you do." : "The AI isn't set up on this server yet, so no clips can be made."}</span>${me?.is_admin && S.view !== "settings" ? `<button class="btn sm primary" data-act="go" data-v="usage">${ic("plus")}Add AI key</button>` : ""}</div>` : "");
   put($("#tpic"), pic); $("#tpic").classList.toggle("live", !!(c && (c.live_job || liveOn(c).length)));
   put($("#utabs"), tabs); moveInd(); $(".topbar").classList.toggle("tabbed", !!tabs);
   put($("#title"), `<span>${esc(title)}</span>`); put($("#subtitle"), subHtml ?? esc(sub)); put($("#actions"), act);
@@ -2921,18 +3014,14 @@ document.addEventListener("keydown", e => {      // the suggestion rows are not 
 /* ---------------------------------------------------------------- What's new
    The updates of this release: a card above the Home heading, the Updates page with all of them, and a pop-up shown
    once per release. Plain and formal. */
-const WN_VER = "2026-11-25";                 // the same string as config.RELEASE on the server
-const WN_TITLE = "The big update";
+const WN_VER = "2026-11-26";                 // the same string as config.RELEASE on the server
+const WN_TITLE = "Your AI key";
 // post: only shown to people who can post from PeakCut yet
 const WN = [
-  {ic: "sliders", art: "styles", t: "Styles", tag: "New", d: "Captions, heading and layout in one style. Use a ready-made one or make your own, with new fonts and emoji."},
-  {ic: "user", art: "cam", t: "The streamer's cam, found for you", tag: "New", d: "PeakCut finds the cam in the stream. Or draw it, with round corners and a border."},
-  {ic: "chat", art: "lang", t: "Captions in your language", tag: "New", d: "Hinglish, Urdu, Hindi, Spanish and more. Translating captions needs a Gemini key."},
-  {ic: "radio", t: "Live now", tag: "New", d: "See who is streaming right now on Twitch and Kick, and start clipping them in one click."},
-  {ic: "crown", t: "Campaigns", tag: "New", d: "Clipping campaigns you can earn from, and clips that follow a campaign's rules and post by themselves."},
-  {ic: "cal", t: "Schedule", tag: "New", d: "Every post on YouTube, Instagram and TikTok by day and time, in a week view or a list."},
-  {ic: "rec", t: "Steadier live recording", tag: "Better", d: "Twitch ad breaks are left out, recordings carry on after a restart, and a stuck recording says why."},
-  {ic: "plug", t: "Instagram for newer Meta apps", tag: "Better", d: "Connect Instagram through Facebook Login for Business with your own app's login configuration id."},
+  {ic: "bolt", t: "A working AI key is needed", tag: "Important", d: "Without one PeakCut makes no clips and records nothing. It no longer picks moments by sound."},
+  {ic: "sliders", t: "A simpler AI page", tag: "New", d: "Pick a service, paste your key and choose a model. For Gemini, only models your key can use are listed."},
+  {ic: "user", t: "More AI services", tag: "New", d: "DeepSeek, Mistral, Together, Kimi, Qwen, LM Studio and more. Get a key shows the free ones."},
+  {ic: "up", t: "Update from the dashboard", tag: "New", d: "Press Update now on the notice, or switch on automatic updates in Settings, Updates (off by default)."},
 ];
 const wnList = () => WN.filter(x => !x.post || !postSoon());
 const WN_ART = {
@@ -3403,7 +3492,7 @@ document.addEventListener("change", async e => {
   catch (err) { toast(err.message, "bad"); } finally { b.disabled = false; $(".pv", p).textContent = "Add to a creator"; }
 });
 
-const ROUTES = {overview: "", library: "videos", settings: "settings", usage: "usage", styles: "styles", discover: "live", campaigns: "campaigns", schedule: "schedule", updates: "updates"};
+const ROUTES = {overview: "", library: "videos", settings: "settings", usage: "ai", styles: "styles", discover: "live", campaigns: "campaigns", schedule: "schedule", updates: "updates"};
 function pathFor(v, tab) {
   if (v.startsWith("c:")) return `/app/creators/${encodeURIComponent(v.slice(2))}${tab && tab !== "clips" ? "/" + tab : ""}`;
   if (v === "settings") return "/app/settings" + (tab ? "/" + tab : "");
@@ -3418,7 +3507,8 @@ function fromPath(path) {
   if (/^\/app\/settings\/templates\/?$/.test(path)) return ["styles"];        // where Styles used to be
   const sty = path.match(/^\/app\/styles(?:\/([\w-]{1,40}))?\/?$/);       // the list, a new style, or one being edited
   if (sty) return ["styles", sty[1] || ""];
-  const st = path.match(/^\/app\/settings(?:\/(ai|profile|security|apps|speech|storage))?\/?$/);
+  if (/^\/app\/(settings\/ai|usage)\/?$/.test(path)) return ["usage"];      // where the key and AI usage used to be
+  const st = path.match(/^\/app\/settings(?:\/(profile|security|apps|speech|storage|updates|app))?\/?$/);
   if (st) return ["settings", st[1] || null];
   if (/^\/app\/live\/mine\/?$/.test(path)) return ["discover", "mine"];
   const cpm = path.match(/^\/app\/campaigns\/([\w-]{1,40})\/?$/);
@@ -3452,7 +3542,7 @@ function go(v, tab, fromHistory) {
   if (v === "overview") { view.innerHTML = `<div id="homeLive"></div><div id="homeCamps"></div><div id="ov"></div>`; drawHomeLive(); loadHomeLive(); drawHomeCamps(); if (!S.cp.rows || Date.now() - (S.cp.at || 0) > 600000) loadCampaigns(); }
   else if (v === "library") view.innerHTML = `<div id="add"></div><div id="jobs"></div>`;
   else if (v === "settings") view.innerHTML = `<div id="sform"></div>`;
-  else if (v === "usage") { view.innerHTML = `<div id="usage"></div>`; loadUsage(); }
+  else if (v === "usage") { view.innerHTML = `<div id="aikey"></div><div id="usage"></div>`; drawAiKey(); loadUsage(); }
   else if (v === "styles") view.innerHTML = `<div class="sty-page" id="setbody"><div class="set-load">Loading…</div></div>`;
   else if (v === "discover" && S.dzv === "mine") view.innerHTML = myStreamers();
   else if (v === "discover") { view.innerHTML = discoverPage(); discoverWire(); loadDiscover(); }
@@ -4986,6 +5076,130 @@ document.addEventListener("drop", e => {
 });
 
 /* ============================================================ AI usage */
+// ---- the AI page: the service, model and key (for whoever runs PeakCut), then what the AI has been used for
+// Three steps: pick the service, paste the key, pick a model. As soon as a key is pasted (or one is already saved),
+// the service is asked which text models that key can use, and the person picks from that list. Typing a model id is
+// only offered when the service gives no list (a custom or local service) or for a model the list doesn't show.
+async function drawAiKey() {
+  const box = $("#aikey"); if (!box) return;
+  if (!S.status.user?.is_admin) { box.innerHTML = ""; return; }
+  let k;
+  try { k = S.ai = await api("/api/ai"); } catch { return; }
+  S.aiF = {provider: k.provider || k.providers[0].id, main: k.models[0] || "", backup: k.models[1] || "", list: null, err: "",
+           busy: false, typing: false, gone: "", q: ""};
+  aiFormDraw();
+  aiFind();
+}
+const aiPv = () => S.ai.providers.find(x => x.id === S.aiF.provider) || S.ai.providers[0];
+const aiSaved = () => S.ai.provider === S.aiF.provider;              // the service the saved key belongs to
+document.addEventListener("input", e => {
+  const t = e.target; if (!S.aiF || !t.id?.startsWith("ai_")) return;
+  if (t.id === "ai_key" || t.id === "ai_base") return aiFindSoon();          // a pasted key is checked by itself
+  if (t.id === "ai_model_type") { S.aiF.main = t.value.trim(); const mv = $("#ai_model"); if (mv) mv.value = [S.aiF.main, S.aiF.backup].filter(Boolean).join(", "); }
+});
+// Services that cost nothing to start with, as their own pages described them in November 2026. Trial credits that
+// run out are not listed.
+const AI_FREE = [
+  ["gemini", "Google Gemini", "A free plan with daily limits, for some models. The easiest to start with."],
+  ["groq", "Groq", "A free plan with limits per minute and per day. Very fast."],
+  ["openrouter", "OpenRouter", "Models whose name ends in :free cost nothing, with a small daily limit."],
+  ["mistral", "Mistral", "A free mode meant for trying things out, with low limits."],
+  ["nvidia", "NVIDIA", "Free developer access to many open models, for testing."],
+  ["ollama", "Ollama", "Runs on your own computer. Free, no key, no limits. Needs a fairly strong computer."],
+  ["lmstudio", "LM Studio", "Also runs on your own computer. Free, no key."],
+];
+function aiFreeOpen() {
+  const d = $("#formdlg"); if (d.open) return;
+  const picked = S.ai?.providers.find(x => x.id === S.aiF?.provider);       // a service that isn't free: still its link
+  const list = picked?.key_url && !AI_FREE.some(f => f[0] === picked.id) ? [[picked.id, picked.label, "The service you've chosen."], ...AI_FREE] : AI_FREE;
+  const rows = list.map(([id, name, note]) => {
+    const pv = S.ai?.providers.find(x => x.id === id); if (!pv) return "";
+    return `<div class="free-row"><div><b>${esc(name)}</b><span>${esc(note)}</span></div>
+      <div class="free-act">${pv.key_url ? `<a class="ai-link" href="${esc(pv.key_url)}" target="_blank" rel="noopener">${pv.needs_key ? "Get a key" : "Install"}</a>` : ""}<button type="button" class="btn sm" data-act="aiuse" data-v="${esc(id)}">Use</button></div></div>`;
+  }).join("");
+  d.innerHTML = `<form method="dialog" class="dlg free-dlg"><div class="free-top"><h2>Get a key</h2><button class="btn icon ghost" value="x" aria-label="Close">${ic("x")}</button></div>
+    <p class="ai-help" style="margin:0">These cost nothing to start with.</p><div class="free-list">${rows}</div>
+    <p class="ai-help">Free limits change often; each service shows yours. A long video or live recording can use a free plan up.</p></form>`;
+  d.onclose = () => { if (!d.open) d.innerHTML = ""; };
+  d.showModal();
+}
+// a dropdown of our own: a button that looks like a field, and a list under it
+function aiDrop(key, label, rows, chosen) {
+  return `<div class="dd" data-dd="${key}"><button type="button" class="dd-btn" data-act="aidd" aria-haspopup="listbox" aria-expanded="false" ${rows.length ? "" : "disabled"}><span>${esc(label)}</span>${ic("caret")}</button>
+    <div class="dd-menu" role="listbox">${rows.map(([v, l, tag]) => `<button type="button" class="dd-opt" role="option" aria-selected="${v === chosen}" data-act="aiopt" data-k="${key}" data-v="${esc(v)}"><span>${esc(l)}</span>${tag ? `<em>${esc(tag)}</em>` : ""}${v === chosen ? ic("check") : ""}</button>`).join("")}</div></div>`;
+}
+function aiDropClose(except) {
+  $$(".dd.open").forEach(d => { if (d !== except) { d.classList.remove("open"); d.querySelector(".dd-btn")?.setAttribute("aria-expanded", "false"); } });
+}
+document.addEventListener("click", e => { aiDropClose(e.target.closest(".dd")); });
+document.addEventListener("keydown", e => {
+  const d = e.target.closest?.(".dd"); if (!d) return;
+  if (e.key === "Escape") { aiDropClose(); return d.querySelector(".dd-btn").focus(); }
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault();
+  d.classList.add("open"); d.querySelector(".dd-btn").setAttribute("aria-expanded", "true");
+  const opts = [...d.querySelectorAll(".dd-opt")], at = opts.indexOf(document.activeElement);
+  opts[Math.max(0, Math.min(opts.length - 1, at + (e.key === "ArrowDown" ? 1 : -1)))]?.focus();
+});
+function aiFormDraw() {
+  const k = S.ai, f = S.aiF, pv = aiPv(), box = $("#aikey"); if (!box) return;
+  const saved = aiSaved() && k.has_key;                       // shown like a PIN: dots, and the last characters
+  const keyPh = saved ? "\u2022".repeat(16) + (k.key_hint || "") : "Paste your key";
+  const address = pv.id === "custom" || pv.id === "ollama" || pv.id === "lmstudio";
+  box.innerHTML = `<div class="card ai-key">
+    <div class="card-head"><div><h2>AI key</h2><p class="sub">Use your own key. <button type="button" class="ai-link" data-act="aifree">Get a key</button></p></div>
+      ${k.ready ? `<span class="pill ok">${ic("check")}Ready</span>` : `<span class="pill warn">Not set up</span>`}</div>
+    <input type="hidden" id="ai_model" value="">
+    <div class="ai-row">
+      <div class="f"><span>Service</span><input type="hidden" id="ai_provider" value="${esc(f.provider)}">${aiDrop("provider", pv.label, k.providers.map(x => [x.id, x.label]), f.provider)}</div>
+      ${address ? `<label class="f">Address<input id="ai_base" value="${esc(aiSaved() ? k.base_url || "" : "")}" placeholder="${esc(pv.address || "http://127.0.0.1:1234/v1")}" spellcheck="false"></label>` : `<input id="ai_base" type="hidden" value="">`}
+      ${pv.needs_key ? `<div class="f"><span>Key</span><span class="ai-keybox"><input id="ai_key" type="password" autocomplete="off" spellcheck="false" aria-label="Key" class="${saved ? "ai-saved" : ""}" placeholder="${esc(keyPh)}" title="${saved ? "A key is saved. Paste a new one to replace it." : ""}">${saved ? `<button type="button" class="ai-remove" data-act="airemove">Remove</button>` : ""}</span></div>` : `<input id="ai_key" type="hidden" value="">`}
+      <div class="f" id="ai_pick"></div>
+      <button class="btn primary" data-act="aisave">Save</button>
+    </div>
+    <div id="ai_check" class="ai-check" aria-live="polite"></div></div>`;
+  aiPickDraw();
+}
+function aiPickDraw() {
+  const f = S.aiF, pv = aiPv(), box = $("#ai_pick"), chk = $("#ai_check"); if (!box) return;
+  if (chk) {
+    chk.className = "ai-check" + (f.busy ? "" : f.err || f.gone ? " bad" : f.list ? " ok" : "");
+    chk.innerHTML = f.busy ? `<span class="spin" style="width:13px;height:13px;border-width:2px"></span>Checking your key…`
+      : f.err ? `${ic("warn")}<span>${esc(f.err)}</span>`
+      : f.gone ? `${ic("warn")}<span>“${esc(f.gone)}” isn't available to this key any more. Choose a model and press Save.</span>`
+      : f.list?.length ? `${ic("check")}<span>Key works. ${f.list.length} model${f.list.length === 1 ? "" : "s"} you can use.</span>` : "";
+  }
+  const typing = f.typing || (pv.id === "custom" && !f.list?.length) || (f.list && !f.list.length);
+  box.innerHTML = typing
+    ? `<span>Model${f.list?.length ? ` <button type="button" class="ai-link" data-act="aitype" data-v="0">Show list</button>` : ""}</span><input id="ai_model_type" value="${esc(f.main)}" placeholder="Model name" spellcheck="false">`
+    : `<span>Model</span>${aiDrop("model", f.main || (f.busy ? "Checking…" : f.list ? "Choose a model" : "Paste your key first"),
+        f.list?.length ? [...f.list.map((m, i) => [m, m, i === 0 ? "Recommended" : ""]), ["__type", "Other (type it)…"]] : [], f.main)}`;
+  const mv = $("#ai_model"); if (mv) mv.value = [f.main, f.backup].filter(Boolean).join(", ");
+}
+let aiFindTimer = 0, aiFindN = 0;
+function aiFindSoon() { clearTimeout(aiFindTimer); aiFindTimer = setTimeout(aiFind, 600); }
+async function aiFind() {
+  const f = S.aiF; if (!f) return;
+  const pv = aiPv(), key = $("#ai_key")?.value.trim() || "", base = $("#ai_base")?.value.trim() || "";
+  if (pv.needs_key && !key && !(aiSaved() && S.ai.has_key)) { f.list = null; f.err = ""; f.busy = false; return aiPickDraw(); }
+  if (pv.id === "custom" && !base && !aiSaved()) { f.list = null; f.err = ""; f.busy = false; return aiPickDraw(); }
+  const n = ++aiFindN; f.busy = true; f.err = ""; aiPickDraw();
+  try {
+    const r = await send("/api/ai/models", {provider: f.provider, base_url: base, key});
+    if (n !== aiFindN) return;
+    f.list = r.models || []; f.gone = "";
+    if (f.list.length && !f.typing) {
+      if (f.main && !f.list.includes(f.main)) { f.gone = f.main; f.main = ""; }
+      if (!f.main) f.main = f.list[0];
+      if (f.backup && !f.list.includes(f.backup)) f.backup = "";
+    }
+  } catch (e) {
+    if (n !== aiFindN) return;
+    f.list = null;
+    f.err = (e.message || "The service didn't answer.").replace(/^The service did not give its list of models\.\s*/, "")
+      .replace(/Paste a working key on the AI page\./, "Check the key and paste it again.");
+  } finally { if (n === aiFindN) { f.busy = false; aiPickDraw(); } }
+}
 async function loadUsage() {
   try { S.usage = await api("/api/usage"); } catch { return; }
   S.status.ai = {...S.status.ai, ready: S.usage.ready, provider: S.usage.provider, model: S.usage.model, today_calls: S.usage.today_calls, today_tokens: S.usage.today_tokens};
@@ -5012,7 +5226,7 @@ function hbars(rows) {
 }
 function drawUsage() {
   const k = S.usage, box = $("#usage"); if (!k || !box) return;
-  box.innerHTML = `${k.ready ? "" : `<div class="note">${ic("warn")}<span>${S.status.user?.is_admin ? "No AI key is set, so clips are picked by loudness only. Add your key under Settings, AI." : "The AI isn't set up on this server yet, so clips are picked by loudness."}</span></div>`}
+  box.innerHTML = `${k.ready ? "" : `<div class="note">${ic("warn")}<span>${S.status.user?.is_admin ? "No AI key is set, so no clips can be made. Add your key above." : "The AI isn't set up on this server yet, so no clips can be made."}</span></div>`}
     <div class="tiles five" style="margin-top:${k.ready ? 0 : 16}px">
       <div class="tile"><i>${ic("bolt")}</i><b>${k.ready ? esc(k.provider || "Ready") : "Not set up"}</b><span>${k.ready && k.model ? esc(k.model) : "AI service"}</span></div>
       <div class="tile"><i>${ic("clock")}</i><b>${(k.today_calls || 0).toLocaleString()}</b><span>AI calls today</span></div>
@@ -5661,22 +5875,15 @@ document.addEventListener("change", async e => {
 
 /* ============================================================ settings */
 // With sign-in off there is no profile or password to manage. The AI section is for whoever runs the server.
+// The AI service, model and key are set on the AI page itself (next to what the AI has been used for), not here.
 const setTabs = () => [
-  ...(S.status.user?.is_admin ? [["ai", "AI", "bolt", "Your AI service, model and key"]] : []),
   ...(S.status.accounts === false ? [] : [["profile", "Profile", "user", "Your name, email and how you sign in"],
                                           ["security", "Security", "lock", "Password and signing out"]]),
   ["apps", "Connected apps", "plug", "Where your clips get posted"],
   ...(S.status.user?.is_admin ? [["speech", "Speech models", "chat", "The languages PeakCut can hear"],
-                                 ["storage", "Storage", "folder", "Where videos and clips are kept"]] : [])];
-function aiHints() {
-  const k = S.ai, sel = $("#ai_provider"); if (!k || !sel) return;
-  const pv = k.providers.find(x => x.id === sel.value) || k.providers[0], same = pv.id === k.provider;
-  $("#ai_key").placeholder = same && k.has_key ? `Saved${k.key_hint ? ", ends in " + k.key_hint : ""}. Paste a new key to replace it` : pv.needs_key ? "Paste your key" : "Not needed";
-  $("#ai_keyhint").innerHTML = pv.key_url ? `${pv.needs_key ? "Get a key at" : "Set it up at"} <a href="${esc(pv.key_url)}" target="_blank" rel="noopener">${esc(pv.key_url.replace("https://", ""))}</a>. The key stays on this server and is never shown again.` : "The key stays on this server and is never shown again.";
-  $("#ai_model").placeholder = pv.example ? "For example " + pv.example : "The model id, exactly as the service names it";
-  $("#ai_base").placeholder = pv.address || "http://127.0.0.1:1234/v1";
-  $("#ai_basewrap").hidden = pv.id !== "custom" && !(same && k.base_url);
-}
+                                 ["storage", "Storage", "folder", "Where videos and clips are kept"],
+                                 ["updates", "Updates", "up", "Get new versions"]] : []),
+  ...(S.status.user?.is_admin && S.status.accounts === false ? [["app", "App", "plug", "Open PeakCut from an icon"]] : [])];
 async function drawSettings() {
   const box = $("#sform"); if (!box) return;
   const tab = S.stab || setTabs()[0][0], me = S.status.user;
@@ -5685,19 +5892,20 @@ async function drawSettings() {
     <div class="set-body" id="setbody"><div class="set-load">Loading…</div></div></div>`;
   const body = $("#setbody");
   try {
-    if (tab === "ai") {
-      const k = S.ai = await api("/api/ai");
-      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Use your own key from any of these services. You pay that service directly. Without a key, clips are picked by loudness.</p>
-          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key and pick a model.</span>`}</div>
-          <div class="ai-form">
-            <label class="f">AI service<select id="ai_provider">${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
-            <label class="f">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
-            <label class="f" id="ai_basewrap">Address<input id="ai_base" value="${esc(k.base_url || "")}" spellcheck="false"><span class="hint">Where the service answers. Only needed for a custom service.</span></label>
-            <label class="f">Model<span class="with"><input id="ai_model" list="ai_models" value="${esc(k.models.join(", "))}" spellcheck="false"><button class="btn" type="button" data-act="aimodels">Find models</button></span>
-              <datalist id="ai_models"></datalist><span class="hint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span></label>
-          </div>
-          <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>`;
-      aiHints();
+    if (tab === "app") {
+      body.innerHTML = `<section class="set-sec"><h2>PeakCut as an app</h2><p class="help">Put a PeakCut icon on your desktop and in the Start menu. Clicking it starts PeakCut and opens it in its own window, so you never have to run a command again.</p>
+        <div class="row" style="margin:14px 0"><img src="/brand/peakcut.ico" alt="" width="40" height="40"><button class="btn primary" data-act="mkicon">${ic("down")}Create the PeakCut icon</button></div>
+        <p class="help">To keep it on the Windows taskbar: open the Start menu, type PeakCut, right-click it and choose <b>Pin to taskbar</b>. If you move the PeakCut folder, create the icon again.</p>
+        <h2 style="margin-top:28px">Close PeakCut</h2><p class="help">Opened from the icon, PeakCut runs quietly in the background. Close it here.</p>
+        <div class="row" style="margin-top:12px"><button class="btn" data-act="quitapp">Close PeakCut</button></div></section>`;
+    }
+    if (tab === "updates") {
+      const u = await api("/api/update");
+      body.innerHTML = `<section class="set-sec"><h2>Updates</h2><p class="help">PeakCut looks for a new version on GitHub every minute. Updating keeps your settings, keys, videos and clips.</p>
+        <dl class="kv"><div><dt>This version</dt><dd>${esc(u.version || "unknown")}</dd></div><div><dt>Newer version</dt><dd>${u.found ? `<span class="pill warn">Available</span>` : `<span class="pill ok">${ic("check")}You're up to date</span>`}</dd></div></dl>
+        ${u.found && u.can ? `<div class="row" style="margin:14px 0"><button class="btn primary" data-act="updnow">Update now</button></div>` : ""}
+        <label class="sw" style="margin-top:16px"><input type="checkbox" id="upd_auto" ${u.auto ? "checked" : ""} ${u.can || u.auto ? "" : "disabled"}>Update automatically</label>
+        <p class="help" style="margin-top:8px">${u.can ? "When it's on, a new version is installed by itself while nothing is recording or being made, and PeakCut restarts. Off by default." : esc(u.why)}</p></section>`;
     }
     if (tab === "speech") {
       const r = await api("/api/speech");
@@ -5819,27 +6027,9 @@ async function drawSettings() {
           <div class="appcard"><span class="applogo" style="background:#1877F2">${fb}</span>
             <div class="apptx"><b>Facebook</b><span>Post clips to a Facebook Page through Composio.</span>${listOf(mine("facebook"))}</div><div class="appact">${fbAct}</div>${keyPanel}</div>
           ${card("tiktok", "TikTok", tt, "#000", "Post clips straight to your TikTok.")}
-        </div></section>${admin ? await ytCookiesCard(yt) : ""}`;
+        </div></section>`;
     }
   } catch (e) { body.innerHTML = `<div class="set-load">${esc(e.message)}</div>`; }
-}
-async function ytCookiesCard(logo) {
-  const st = await api("/api/youtube-cookies").catch(() => null);
-  if (!st) return "";
-  const open = S.setupOpen === "ytdl";
-  const act = `<button class="btn sm ${st.saved ? "ghost" : "primary"}" data-act="appsetup" data-p="ytdl">${ic("cog")}${st.saved ? "Replace" : "Add cookies"}</button>`
-    + (st.saved ? `<button class="btn sm ghost" data-act="ytcookies" data-remove="1">Remove</button>` : "");
-  const panel = open ? `<div class="appsetup">
-      <p class="sub">YouTube refuses many servers with "Sign in to confirm you're not a bot". Cookies from a signed-in YouTube account get past it. Use a spare Google account, not your main one.</p>
-      <ol><li>In a private browser window, sign in to YouTube with that account.</li>
-        <li>With an extension such as <b>Get cookies.txt LOCALLY</b>, export the cookies for youtube.com.</li>
-        <li>Paste the whole file below and save. Then close that private window without signing out.</li></ol>
-      <label class="f">cookies.txt<textarea id="ytc" rows="6" spellcheck="false" autocomplete="off" placeholder="# Netscape HTTP Cookie File"></textarea></label>
-      <div class="row"><button class="btn primary" data-act="ytcookies">Save</button><button class="btn ghost" data-act="appsetup" data-p="">Close</button></div></div>` : "";
-  return `<section class="set-sec"><h2>YouTube links</h2><p class="help">Only needed when YouTube links (videos or lives) fail with "YouTube isn't letting PeakCut download".</p>
-    <div class="apps"><div class="appcard"><div class="apphead"><span class="applogo">${logo}</span>
-    <div class="apptx"><b>YouTube cookies</b><span>${st.saved ? `Saved ${esc(new Date(st.updated * 1000).toLocaleString())}. Used for every YouTube link.` : "None saved."}</span></div>
-    <div class="appact">${act}</div></div>${panel}</div></div></section>`;
 }
 async function saveSettings() { const d = {}; $$("#sform [data-s]").forEach(i => d[i.dataset.s] = i.value); await send("/api/settings", d, "PUT"); }
 
@@ -6102,7 +6292,15 @@ document.addEventListener("change", async e => {
     if (t.id === "o_captions") t.dataset.overridden = "true";
     syncCaptionStyle(t);
   }
-  if (t.id === "ai_provider") { $("#ai_models").innerHTML = ""; if (S.ai && t.value !== S.ai.provider) { $("#ai_model").value = ""; $("#ai_base").value = ""; } return aiHints(); }
+  if (t.id === "upd_auto") {
+    try {
+      const st = await send("/api/update/auto", {on: t.checked}, "PUT");
+      toast(t.checked ? "PeakCut will update by itself." : "Automatic updates are off.", "ok");
+      if (t.checked && (await api("/api/update")).found && st.can) updWatch();      // one is waiting: it starts now
+    }
+    catch (err) { t.checked = !t.checked; toast(err.message, "bad"); }
+    return;
+  }
   if (t.dataset.sel) {
     const k = t.dataset.sel;
     if (t.checked) sel().add(k); else sel().delete(k);
@@ -6132,24 +6330,51 @@ document.addEventListener("click", async e => {
       if (S.tplEdit?.dirty && !await ask("Leave without saving?", "Your changes to this style are lost.", "Leave", true)) return;
       if (S.tplEdit) { tplDraftClear(); S.tplEdit = null; }
       return go(d.v, d.t || d.tab); }
-    if (a === "aimodels") {
+    if (a === "airemove") {
+      if (!await ask("Remove your AI key?", "PeakCut can't make clips or record until you add a key again.", "Remove", true)) return;
       b.disabled = true;
-      try {
-        const r = await send("/api/ai/models", {provider: $("#ai_provider").value, base_url: $("#ai_base").value, key: $("#ai_key").value});
-        $("#ai_models").innerHTML = r.models.map(m => `<option value="${esc(m)}">`).join("");
-        toast(r.models.length ? `${r.models.length} models found. Click the model box to pick one.` : "The service listed no models. Type the model yourself.", r.models.length ? "ok" : "");
-        if (r.models.length) $("#ai_model").focus();
-      } finally { b.disabled = false; }
+      await api("/api/ai/key", {method: "DELETE"});
+      S.status = await api("/api/status"); drawShell(); await drawAiKey(); loadUsage();
+      return toast("Key removed.", "ok");
+    }
+    if (a === "aifree") return aiFreeOpen();
+    if (a === "aiuse") {                            // chosen in the pop-up: set the card to that service
+      $("#formdlg").close();
+      const back = d.v === S.ai.provider;
+      Object.assign(S.aiF, {provider: d.v, list: null, err: "", gone: "", typing: false,
+                            main: back ? S.ai.models[0] || "" : "", backup: back ? S.ai.models[1] || "" : ""});
+      aiFormDraw(); aiFind();
+      return $("#ai_key")?.focus?.();
+    }
+    if (a === "aidd") {
+      const dd = b.closest(".dd"), open = !dd.classList.contains("open");
+      aiDropClose(dd); dd.classList.toggle("open", open); b.setAttribute("aria-expanded", open);
+      if (open) dd.querySelector('.dd-opt[aria-selected="true"]')?.scrollIntoView({block: "nearest"});
       return;
     }
+    if (a === "aiopt") {
+      aiDropClose();
+      if (d.k === "provider") {                        // another service: its own key and its own models
+        if (d.v === S.aiF.provider) return;
+        const back = d.v === S.ai.provider;
+        Object.assign(S.aiF, {provider: d.v, list: null, err: "", gone: "", typing: d.v === "custom",
+                              main: back ? S.ai.models[0] || "" : "", backup: back ? S.ai.models[1] || "" : ""});
+        aiFormDraw(); return aiFind();
+      }
+      if (d.v === "__type") { S.aiF.typing = true; S.aiF.main = ""; aiPickDraw(); return $("#ai_model_type")?.focus(); }
+      S.aiF.main = d.v; S.aiF.gone = ""; if (S.aiF.backup === d.v) S.aiF.backup = "";
+      return aiPickDraw();
+    }
+    if (a === "aitype") { S.aiF.typing = d.v === "1"; aiPickDraw(); if (S.aiF.typing) $("#ai_model_type")?.focus(); return; }
     if (a === "aisave" || a === "aitest") {
       b.disabled = true;
       try {
         if (a === "aisave") await send("/api/ai", {provider: $("#ai_provider").value, models: $("#ai_model").value, base_url: $("#ai_base").value, key: $("#ai_key").value}, "PUT");
         let ok = null, why = "";
         try { ok = await send("/api/ai/test"); } catch (err) { why = err.message; }
-        S.status = await api("/api/status"); drawShell(); await drawSettings();
-        if (ok) toast(`Saved. ${ok.model} answered, so the AI is ready.`, "ok");
+        S.status = await api("/api/status"); drawShell(); await drawAiKey(); loadUsage();
+        if (ok?.busy) toast(`Saved. Your key works, but ${ok.model} is busy right now. It usually clears in a minute.`, "ok");
+        else if (ok) toast(`Saved. ${ok.model} answered, so the AI is ready.`, "ok");
         else toast(`Saved, but the test failed. ${why}`, "bad");
       } finally { b.disabled = false; }
       return;
@@ -6443,7 +6668,26 @@ document.addEventListener("click", async e => {
       await send(`/api/jobs/${D.jid}/clips/${D.cid}/render`, {template: v}); toast("Making it again in this style. Posts wait for the new version.", "ok"); await tick(); return drawClipDlg(true); }
     if (a === "settab") { e.preventDefault(); if (S.tplEdit?.dirty && !await ask("Leave without saving?", "Your changes to this style are lost.", "Leave", true)) return;
       S.tplEdit = null; S.stab = d.k; remember("settings", d.k); return drawSettings(); }
+    if (a === "updseen") { try { localStorage.setItem("peakcut_updated_seen", S.status.updated?.version || ""); } catch {} return drawShell(); }
+    if (a === "mkicon") {
+      b.disabled = true;
+      try { const r = await send("/api/app/shortcut", {}); toast("The PeakCut icon is made: " + r.made[0], "ok"); }
+      finally { b.disabled = false; }
+      return;
+    }
+    if (a === "quitapp") {
+      if (!await ask("Close PeakCut?", "It stops running until you open it again from its icon. Scheduled posts and auto-recording wait until then.", "Close PeakCut", true)) return;
+      await send("/api/app/quit", {});
+      document.body.innerHTML = `<div class="updcard"><div class="updbox"><h2>PeakCut is closed</h2><p>Click the PeakCut icon to open it again. You can close this window.</p></div></div>`;
+      return;
+    }
     if (a === "updhow") return updateHow();
+    if (a === "updnow") {
+      if ($("#formdlg").open) $("#formdlg").close();
+      b.disabled = true;
+      const st = await send("/api/update/install", {});
+      S.status.updater = st; drawShell(); return updWatch();
+    }
     if (a === "updlater") { try { localStorage.setItem("peakcut_update_seen", S.status.update?.latest || ""); } catch {} return drawShell(); }
     if (a === "storopen") { await send("/api/storage/open"); return; }
     if (a === "storchange") { S.storOpen = !S.storOpen; S.storNew = ""; return drawSettings(); }
@@ -6459,10 +6703,6 @@ document.addEventListener("click", async e => {
     if (a === "storcancel") { await send("/api/storage", {cancel: true}, "PUT"); toast("Kept the current folder", "ok"); return drawSettings(); }
     if (a === "appsetup") { S.setupOpen = d.p && S.setupOpen !== d.p ? d.p : ""; return drawSettings(); }
     if (a === "copytext") { await navigator.clipboard.writeText(d.t); return toast("Copied", "ok"); }
-    if (a === "ytcookies") {
-      await send("/api/youtube-cookies", d.remove ? {remove: true} : {text: $("#ytc").value}, "PUT");
-      S.setupOpen = ""; toast(d.remove ? "YouTube cookies removed." : "Saved. YouTube links will use them now.", "ok"); return drawSettings();
-    }
     if (a === "appsave") {
       await send("/api/apps", {platform: d.p, client_id: $("#app_id").value, client_secret: $("#app_secret").value, config_id: $("#app_config")?.value ?? null, open: $("#app_open")?.checked ?? null}, "PUT");
       S.setupOpen = ""; S.status = await api("/api/status"); toast("Saved. People can connect now.", "ok"); return drawSettings();

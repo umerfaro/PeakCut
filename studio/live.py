@@ -84,7 +84,7 @@ def resolve(url: str, height: int = 720) -> dict:
     """Ask yt-dlp for the stream's playable address (at most `height`). Raises NotLive if the channel is offline."""
     import yt_dlp
     opts = {**media.ydl_base(), "quiet": True, "no_warnings": True, "noplaylist": True, "logger": _Quiet(),
-            "format": f"b[height<={height}]/bv*[height<={height}]+ba/b", **media.cookie_opts()}
+            "format": f"b[height<={height}]/bv*[height<={height}]+ba/b"}
     if media.is_youtube(url) and media.youtube_paused():
         raise NotLive(media.YT_BLOCKED)
     try:
@@ -1359,6 +1359,10 @@ def _watch_one(c):
                     resolve(normalize(url))
                 except NotLive:
                     continue
+            try:
+                brain.require_ai()             # no working AI key: nothing is recorded (the pages show the warning)
+            except ValueError:
+                return
             start_session(c, url)
             where = creators.platform_key(url).title()
             creators.log(c["id"], f"Went live on {where}: recording started automatically")

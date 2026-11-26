@@ -1452,9 +1452,15 @@ def _run_job(job):
         remaining_blocks = len(blocks) - bi
         quota = (left + remaining_blocks - 1) // remaining_blocks
         s0 = int((a - lo) / 16000)
-        found, ai = brain.find_clips(bw, db[s0: s0 + int((b - a) / 16000) + 1], (b - a) / 16000, job["title"],
-                                     job["uploader"], quota, int(o["min_len"]), int(o["max_len"]), notes.append,
-                                     game=game, force=bool(o.get("force")), focus=o.get("focus", ""))
+        try:
+            found, ai = brain.find_clips(bw, db[s0: s0 + int((b - a) / 16000) + 1], (b - a) / 16000, job["title"],
+                                         job["uploader"], quota, int(o["min_len"]), int(o["max_len"]), notes.append,
+                                         game=game, force=bool(o.get("force")), focus=o.get("focus", ""))
+        except brain.NoAI as e:
+            if not job["clips"]:
+                raise RuntimeError(f"No clips were made. {e}") from e
+            notes.append("Part of the video was skipped because the AI stopped answering.")
+            found, ai = [], {}
         tokens += ai.get("tokens", 0)
         model = ai.get("model") or model
         if ai.get("note"):
@@ -1510,8 +1516,7 @@ def _run_job(job):
     clips = [c for c in job["clips"] if c.get("status") != "dropped"]
     if not clips:
         job["empty_since"] = time.time()     # its source is kept a few days, for "Clip anyway"
-    job["ai"] = {"model": model, "tokens": tokens, "log": notes[-5:],
-                 "note": "The AI was unavailable, so clips were picked by loudness only." if clips and not model else ""}
+    job["ai"] = {"model": model, "tokens": tokens, "log": notes[-5:], "note": ""}
     stage = "Done" if clips else "Done, but nothing clip-worthy was found"
     if forcing and not clips:
         stage = "Done, but there was no speech to clip"
