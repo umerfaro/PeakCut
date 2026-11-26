@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import threading
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -25,7 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from . import admin as admins
 from . import campaigns, discover
 from . import account, load, shortcut, updates
-from . import (accounts, ai, alerts, auth, composio_post, brain, config, creators, ctx, db, jobs, live, media, posting,
+from . import (accounts, ai, alerts, auth, composio_post, brain, config, creators, ctx, db, jobs, live, media, music, posting,
                profiles, render, safe, templates, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
@@ -1276,6 +1277,105 @@ def _clip_or_404(jid: str, cid: str):
     if not clip:
         raise HTTPException(404, "No such clip")
     return job, clip
+
+
+@app.get("/api/music")
+def music_catalog():
+    return music.catalog()
+
+
+@app.get("/api/music/{track}/audio")
+def music_audio(track: str):
+    if not music.has_track(track):
+        raise HTTPException(404, "That music track is unavailable.")
+    _throttle("musictrack:" + ctx.uid(), 40, 60)
+    try:
+        path = music.track_file(track)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(502, str(exc) if isinstance(exc, RuntimeError) else "PeakCut couldn't open the track.") from exc
+    return FileResponse(path, media_type="audio/mpeg" if path.suffix == ".mp3" else "audio/wav",
+                        headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.post("/api/jobs/{jid}/clips/{cid}/music")
+def clip_music(jid: str, cid: str, body: dict = Body(...)):
+    job, clip = _clip_or_404(jid, cid)
+    _throttle("clipmusic:" + ctx.uid(), 20, 600)
+    try:
+        jobs.request_music(job, clip, body.get("music"), body.get("version"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return jobs.public(job)
+
+
+_music_previews = threading.BoundedSemaphore(2)
+
+
+def _music_preview(video, clean, settings, still_current=None):
+    from starlette.background import BackgroundTask
+
+    if not _music_previews.acquire(blocking=False):
+        raise HTTPException(429, "Two mixes are being previewed. Try again in a moment.")
+    preview = None
+    try:
+        preview = tempfile.TemporaryDirectory(prefix="pc-music-")
+        work = Path(preview.name)
+        if clean is None or not clean.is_file():
+            clean = work / "clean.m4a"
+            music.extract_clean(video, clean, music.duration(video))
+        result = work / "preview.mp4"
+        music.mix(video, clean, result, settings, preview=True)
+        if still_current and not still_current():
+            raise HTTPException(409, "The clip changed while its music was being previewed.")
+        return FileResponse(result, media_type="video/mp4", background=BackgroundTask(preview.cleanup),
+                            headers={"Cache-Control": "private, no-store"})
+    except HTTPException:
+        if preview:
+            preview.cleanup()
+        raise
+    except (OSError, ValueError, RuntimeError) as exc:
+        if preview:
+            preview.cleanup()
+        raise HTTPException(422, "PeakCut couldn't prepare this audio preview.") from exc
+    finally:
+        _music_previews.release()
+
+
+def _preview_settings(body):
+    _throttle("musicpreview:" + ctx.uid(), 20, 60)
+    try:
+        return music.clean(body.get("music"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/jobs/{jid}/clips/{cid}/music/preview")
+def clip_music_preview(jid: str, cid: str, body: dict = Body(...)):
+    job, clip = _clip_or_404(jid, cid)
+    settings = _preview_settings(body)
+
+    def still_current():
+        return clip.get("status") == "done" and body.get("version") == clip.get("version", 0)
+
+    if not still_current() or not clip.get("file"):
+        raise HTTPException(409, "Wait until the clip has finished rendering or open it again.")
+    return _music_preview(*jobs.clip_audio_paths(job, clip), settings, still_current=still_current)
+
+
+@app.post("/api/music/preview")
+def style_music_preview(body: dict = Body(...)):
+    settings = _preview_settings(body)
+    for job in jobs.list_jobs()[:10]:
+        for clip in job.get("clips", []):
+            if clip.get("status") == "done" and clip.get("file"):
+                video, clean = jobs.clip_audio_paths(job, clip)
+                if video.is_file():
+                    return _music_preview(video, clean, settings)
+    try:
+        video, _ = templates.sample()
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(422, "PeakCut couldn't prepare a sample video.") from exc
+    return _music_preview(video, None, settings)
 
 
 @app.put("/api/jobs/{jid}/clips/{cid}/text")

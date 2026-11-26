@@ -6,13 +6,14 @@ import math
 import queue
 import re
 import shutil
+import tempfile
 import threading
 import time
 import traceback
 import uuid
 from pathlib import Path
 
-from . import ai, brain, config, creators, ctx, facecam, fetch_model, games, hashtags, load, media, quality, render, roman, safe, templates, transcribe, usage
+from . import ai, brain, config, creators, ctx, facecam, fetch_model, games, hashtags, load, media, music, quality, render, roman, safe, templates, transcribe, usage
 
 class _FairQueue:
     """Whose video is next. Each person has their own line and the lines take turns, so someone who adds ten
@@ -167,7 +168,7 @@ def public(job) -> dict:
     """What the browser may see: no server paths, no owner id."""
     out = {k: v for k, v in job.items() if k not in HIDDEN}
     out["source"] = {k: v for k, v in job["source"].items() if k != "path"}
-    out["clips"] = [{k: v for k, v in c.items() if k not in ("src", "fixed_words", "fixed_for", "heard", "trans_words", "trans_for")}
+    out["clips"] = [{k: v for k, v in c.items() if k not in ("src", "fixed_words", "fixed_for", "heard", "trans_words", "trans_for", "music_update")}
                     for c in job["clips"] if c.get("status") != "dropped"]
     for clip in out["clips"]:
         bounds = _legacy_bounds(job, clip)
@@ -292,7 +293,10 @@ def _load_file(f: Path, uid: str):
         if c.get("src"):
             c["src"] = _remap(c["src"], f.parent / "clips")
         if c.get("status") in ("rendering", "queued"):
-            if job.get("attach"):
+            if "music_update" in c:
+                c["status"] = "queued"
+                job.setdefault("remake", []).append(c["id"])
+            elif job.get("attach"):
                 c["status"] = "queued"  # the recording is still going: live.attach finishes these
             elif buffered and not c.get("src"):
                 c["status"] = "queued"  # the stream is still on disk: live.recover() finishes these
@@ -499,12 +503,12 @@ def copy_clip(jid, cid, changes: dict):
     n = 2
     while any(c["id"] == f"{cid}-{n}" for c in job["clips"]):
         n += 1
-    new = {k: v for k, v in clip.items() if k not in ("posts", "file", "cover", "made_at")}
+    new = {k: v for k, v in clip.items() if k not in ("posts", "file", "cover", "made_at", "music_error")}
     new.update(id=f"{cid}-{n}", status="queued", error=None, asked=True)   # its version carries on: no second listen, no auto-post
     job["clips"].insert(job["clips"].index(clip) + 1, new)
     save(job)
     try:
-        request_render(jid, new["id"], changes)
+        request_render(jid, new["id"], changes, allow_queued=True)
     except Exception:
         job["clips"].remove(new)
         save(job)
@@ -541,53 +545,101 @@ def restyle():
             save(job)
 
 
-def request_render(jid, cid, changes: dict):
-    job = _jobs[jid]
-    clip = next(c for c in job["clips"] if c["id"] == cid)
-    new = dict(clip)
-    repair = _legacy_bounds(job, clip)
-    if repair:
-        new.update(start=repair[0], end=repair[1])
-    if "captions" in changes:
-        new.update(clean_options({"captions": changes["captions"]}))
-    for k in ("start", "end"):
-        if k in changes and not (repair and float(changes[k]) == clip[k]):
-            new[k] = round(float(changes[k]), 2)
-    if "src_offset" in clip and not repair:  # keep edits inside the saved piece of stream
-        new["start"] = max(new["start"], clip["src_offset"])
-        new["end"] = min(new["end"], clip["src_end"])
-    if not (math.isfinite(new["start"]) and math.isfinite(new["end"])) or new["start"] < 0:
-        raise ValueError("Those times aren't valid.")
-    if "src_offset" in clip and new["end"] - new["start"] < 3 and "start" not in changes and "end" not in changes:
-        raise ValueError("This moment was not in the saved part of the stream, so it can't be made again.")
-    if not 3 <= new["end"] - new["start"] <= 180:
-        raise ValueError("A clip can be 3 to 180 seconds long.")
-    for k in ("hook", "title", "description", "style", "layout"):
-        if k in changes:
-            new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000}.get(k, 20)]
-    if changes.get("template"):                      # made again with another template
-        t = templates.get(str(changes["template"])[:12])
-        if not t:
-            raise ValueError("That style isn't there any more. Pick another one.")
-        new.update(template=t["id"], look=templates.clean_look(t["look"]), layout=t["look"]["layout"])
-    elif "style" in changes or "layout" in changes:  # the old caption style and layout choices
-        new.pop("look", None)
-        new["template"] = ""
-    if "hashtags" in changes:
-        new["hashtags"] = _tags(changes["hashtags"])
-    if new.get("style") not in render.STYLES:
-        new["style"] = DEFAULTS["style"]
-    if new.get("layout") not in render.LAYOUTS:
-        new["layout"] = DEFAULTS["layout"]
-    if repair:
-        for key in ("src", "src_offset", "src_end"):
-            new.pop(key, None)
-            clip.pop(key, None)
-    new.pop("draft", None)
-    clip.update(new, status="queued")
-    clip.pop("draft", None)
+def request_render(jid, cid, changes: dict, *, allow_queued=False):
+    with _lock:
+        job = _jobs[jid]
+        clip = next(c for c in job["clips"] if c["id"] == cid)
+        if not allow_queued and clip.get("status") in ("queued", "rendering"):
+            raise ValueError("This clip is still being made.")
+        new = dict(clip)
+        repair = _legacy_bounds(job, clip)
+        if repair:
+            new.update(start=repair[0], end=repair[1])
+        if "captions" in changes:
+            new.update(clean_options({"captions": changes["captions"]}))
+        for k in ("start", "end"):
+            if k in changes and not (repair and float(changes[k]) == clip[k]):
+                new[k] = round(float(changes[k]), 2)
+        if "src_offset" in clip and not repair:  # keep edits inside the saved piece of stream
+            new["start"] = max(new["start"], clip["src_offset"])
+            new["end"] = min(new["end"], clip["src_end"])
+        if not (math.isfinite(new["start"]) and math.isfinite(new["end"])) or new["start"] < 0:
+            raise ValueError("Those times aren't valid.")
+        if "src_offset" in clip and new["end"] - new["start"] < 3 and "start" not in changes and "end" not in changes:
+            raise ValueError("This moment was not in the saved part of the stream, so it can't be made again.")
+        if not 3 <= new["end"] - new["start"] <= 180:
+            raise ValueError("A clip can be 3 to 180 seconds long.")
+        for k in ("hook", "title", "description", "style", "layout"):
+            if k in changes:
+                new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000}.get(k, 20)]
+        if changes.get("template"):                      # made again with another template
+            t = templates.get(str(changes["template"])[:12])
+            if not t:
+                raise ValueError("That style isn't there any more. Pick another one.")
+            new.update(template=t["id"], look=templates.clean_look(t["look"]), layout=t["look"]["layout"])
+        elif "style" in changes or "layout" in changes:  # the old caption style and layout choices
+            new.pop("look", None)
+            new["template"] = ""
+        if "hashtags" in changes:
+            new["hashtags"] = _tags(changes["hashtags"])
+        if new.get("style") not in render.STYLES:
+            new["style"] = DEFAULTS["style"]
+        if new.get("layout") not in render.LAYOUTS:
+            new["layout"] = DEFAULTS["layout"]
+        if repair:
+            for key in ("src", "src_offset", "src_end"):
+                new.pop(key, None)
+                clip.pop(key, None)
+        new.pop("draft", None)
+        clip.update(new, status="queued")
+        clip.pop("draft", None)
+        clip.pop("music_error", None)
+        save(job)
+        _q.put(("clip", jid, cid))
+
+
+def clip_audio_paths(job, clip):
+    folder = Path(job["dir"]) / "clips"
+    return folder / Path(clip["file"]).name, folder / f"{clip['id']}.clean.m4a"
+
+
+def request_music(job, clip, settings, version=None):
+    settings = music.clean(settings)
+    with _lock:
+        if clip not in job["clips"] or clip.get("status") != "done":
+            raise ValueError("Wait until the clip has finished rendering.")
+        if version is not None and version != clip.get("version", 0):
+            raise ValueError("The clip changed. Open it again before updating its music.")
+        video, _ = clip_audio_paths(job, clip)
+        if not video.is_file():
+            raise ValueError("This clip's video file is missing.")
+        clip.update(music_update=settings, status="queued", music_error=None)
+        save(job)
+        _q.put(("clip", job["id"], clip["id"]))
+
+
+def _update_music(job, clip):
+    """Keep the last playable export if the new mix fails."""
+    clip["status"] = "rendering"
     save(job)
-    _q.put(("clip", jid, cid))
+    settings = clip["music_update"]
+    try:
+        video, clean = clip_audio_paths(job, clip)
+        with tempfile.TemporaryDirectory(dir=video.parent, prefix="mix-") as tmp:
+            work = Path(tmp)
+            if not clean.is_file():
+                original = work / "clean.m4a"
+                music.extract_clean(video, original, music.duration(video))
+                original.replace(clean)
+            result = work / "mix.mp4"
+            music.mix(video, clean, result, settings)
+            result.replace(video)
+        clip.update(music=settings, music_error=None, version=clip.get("version", 0) + 1)
+    except Exception as exc:  # noqa: BLE001
+        clip["music_error"] = safe.friendly(exc, 300)
+    clip["status"] = "done"
+    clip.pop("music_update", None)
+    save(job)
 
 
 def clean_hashtags(v) -> list:
@@ -1558,6 +1610,9 @@ def _worker(quick_only=False):
                 _run_job(job)
             else:
                 clip = next(c for c in job["clips"] if c["id"] == cid)
+                if "music_update" in clip:
+                    _update_music(job, clip)
+                    continue
                 try:
                     words = json.loads((Path(job["dir"]) / "words.json").read_text(encoding="utf-8"))
                 except (OSError, ValueError):

@@ -11,7 +11,7 @@ import secrets
 import threading
 from pathlib import Path
 
-from . import config, ctx
+from . import config, ctx, music
 
 # The fonts a caption can use: the name the renderer knows it by -> the file in studio/fonts
 FONTS = {"Poppins ExtraBold": "Poppins-ExtraBold.ttf", "Poppins Black": "Poppins-Black.ttf", "Anton": "Anton-Regular.ttf",
@@ -124,6 +124,7 @@ def clean_look(raw) -> dict:
     cam_style = {"r": _num(cs.get("r"), 0, 50, 0), "bw": _num(cs.get("bw"), 0, 24, 0), "bc": _hex(cs.get("bc"), "FFFFFF")}
     return {"cap": cap, "hook": hook, "cam": _cam(raw.get("cam")), "cam_style": cam_style, "cam_src": facecam.clean(raw.get("cam_src")),
             "game_src": facecam.clean(raw.get("game_src")),
+            "music": music.clean(raw.get("music")),
             "layout": raw.get("layout") if raw.get("layout") in LAYOUTS else "blur"}
 
 

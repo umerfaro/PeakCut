@@ -689,6 +689,22 @@ a.lnk{color:var(--brand-ink);text-decoration:none;font-weight:600}
 
 /* ---------- dialogs + toasts */
 dialog{border:1px solid var(--line);background:#fff;color:var(--text);border-radius:var(--r-lg);padding:0;max-width:calc(100vw - 32px)}
+#musicdlg{width:min(560px,calc(100vw - 32px));max-height:calc(100dvh - 40px)}
+.music-panel{display:flex;flex-direction:column;max-height:calc(100dvh - 42px)}
+.music-panel header,.music-panel footer{padding:14px 20px;flex-shrink:0}
+.music-panel header{border-bottom:1px solid var(--line)}
+.music-panel header h2{margin:0;font-size:1.18rem}
+.music-panel footer{border-top:1px solid var(--line)}
+.music-body{overflow:auto;padding:16px 20px;display:grid;gap:10px}
+.music-tracks{max-height:224px;overflow:auto;border:1px solid var(--line);border-radius:var(--r)}
+.music-track{display:flex;align-items:center;gap:6px;padding:4px 6px}
+.music-track+.music-track{border-top:1px solid var(--line)}
+.music-select{flex:1;min-width:0;display:grid;gap:3px;padding:7px 9px;text-align:left;border:1px solid transparent;color:inherit;background:transparent;border-radius:8px;cursor:pointer}
+.music-select[aria-pressed=true]{border-color:var(--brand);background:#fff2e8}
+.music-levels input{width:100%;padding:0;accent-color:var(--brand)}
+.music-body audio,.music-body video{width:100%}
+.music-body video{max-height:300px;background:#15110e;border-radius:10px}
+.music-body [hidden]{display:none}
 dialog::backdrop{background:rgba(14,12,11,.42);animation:fadein .16s ease}
 .dlg{padding:24px;width:450px;max-width:100%;display:flex;flex-direction:column;gap:14px}
 .dlg h2{font-size:18px;font-weight:600;color:var(--brand-ink)}
@@ -2261,6 +2277,7 @@ textarea.cpg-in{height:auto;padding:8px 12px;resize:vertical}.cpg-in:focus{borde
 </div>
 <dialog id="clipdlg"></dialog>
 <dialog id="formdlg"></dialog>
+<dialog id="musicdlg" aria-label="Background music"></dialog>
 <dialog id="schdlg" aria-label="Scheduled post"></dialog>
 <input type="file" id="file" accept="video/*" multiple hidden>
 <div id="toasts" role="status" aria-live="polite" popover="manual"></div>
@@ -4072,7 +4089,7 @@ function clipHtml(j, c) {
       ${c.status === "done" ? clipWhere(c) : ""}
       <div class="clip-foot">
         ${busyClip ? "" : `<label class="selck" title="Select this clip"><input type="checkbox" data-sel="${key}" ${sel().has(key) ? "checked" : ""} aria-label="Select this clip"></label>`}
-        ${c.status === "done" ? `<a class="btn sm icon ghost" href="${m}${esc(c.file)}?download=1" title="Download" aria-label="Download">${ic("down")}</a>` : ""}
+        ${c.status === "done" ? `<a class="btn sm icon ghost" href="${m}${esc(c.file)}?download=1&amp;v=${c.version || 0}" title="Download" aria-label="Download">${ic("down")}</a>` : ""}
         <button class="btn sm icon ghost" data-act="copy" ${a} title="Copy post text" aria-label="Copy post text">${ic("copy")}</button>
         ${busyClip ? "" : `<button class="btn sm icon ghost" data-act="delclip" ${a} title="Delete this clip" aria-label="Delete this clip">${ic("trash")}</button>`}
         <span class="grow"></span>
@@ -5512,7 +5529,7 @@ function drawTplTab(body) {
     ${S.tpl.own.length ? `<h3 class="tpl-h">Yours</h3><div class="tpl-grid">${S.tpl.own.map(tplCard).join("")}</div>` : ""}
     <h3 class="tpl-h">Ready-made</h3><div class="tpl-grid">${S.tpl.builtin.map(tplCard).join("")}</div></section>`;
 }
-// ---- the editor: one preview, two tabs. Nothing is saved until Save changes.
+// ---- the editor: a preview and editing tabs. Nothing is saved until Save changes.
 // Presets: each sets every option of one part at once (the captions' place is kept). The options stay below them.
 // Caption presets: each one different in several ways at once (place, movement, letters, colours, background), so
 // no two look alike. Each sets the captions' place too (y: % down the screen; null: the layout's own place).
@@ -5590,7 +5607,7 @@ function drawTplEditor(body) {
       <input class="tpe-name" id="tpe_name" maxlength="40" value="${esc(E.name)}" aria-label="Style name" placeholder="Style name">
       <span class="grow"></span><button class="btn ghost" data-act="tplvideo">${ic("film")}Preview video</button><button class="btn primary" data-act="tplsave">${ic("check")}Save changes</button></div>
     <div class="tpe-body"><div class="tpe-l"><div class="tpe-stage" id="tpestage"></div><p class="tpe-hint">Drag the captions or the heading to move them.</p></div>
-      <div class="tpe-r"><div class="seg tpe-tabs" role="tablist">${[["captions", "Captions"], ["heading", "Heading"], ["layout", "Layout"]].map(([k, l]) =>
+      <div class="tpe-r"><div class="seg tpe-tabs" role="tablist">${[["captions", "Captions"], ["heading", "Heading"], ["layout", "Layout"], ["music", "Music"]].map(([k, l]) =>
         `<button type="button" role="tab" data-act="tpltab" data-k="${k}" aria-pressed="${E.tab === k}">${l}</button>`).join("")}</div><div id="tpectl"></div></div></div></div>`;
   tplPaint(); tplCtl();
 }
@@ -5635,6 +5652,11 @@ function tplCtl() {
   };
   // a heading preset as the heading itself, big enough to read, on a picture of the video
   const hookSample = v => `<span class="hps" style="background-image:url('${tplSrc("blur.jpg")}')"><span style="font-family:'pcf ${esc(v.font)}',sans-serif;color:#${v.color};${v.bg ? `background:#${v.bgc};` : ""}${v.outline ? `-webkit-text-stroke:${v.outline / 3}px #000;paint-order:stroke fill;` : ""}">He did it</span></span>`;
+  if (E.tab === "music") {
+    box.innerHTML = `<div class="tpe-sec"><h4>Background music</h4><p class="sub">${esc(musicSummary(E.look.music))}</p>
+      <button type="button" class="btn" data-act="musicstyle">${ic("plus")}${E.look.music?.track ? "Edit music" : "Add music"}</button></div>`;
+    return;
+  }
   if (E.tab === "captions") {
     const pre = presets(CAP_PRESETS, c, v => ({...E.look, cap: {...c, ...v}, hook: {...E.look.hook, show: false}, layout: "crop", cam: null}));
     const anim = Object.entries(S.tpl.anims || {}).map(([k, l]) => tile("cap.anim", k, `${tplPrev({...E.look, cap: {...c, anim: k, per: 2, y: 50, size: Math.max(c.size, 150)}, hook: {show: false}, layout: "crop"}, {mini: true, play: "anim-" + k})}<em>${esc(l)}</em>`, c.anim === k)).join("");
@@ -6067,6 +6089,190 @@ async function navigateClip(direction) {
   $("#clipdlg .panel").scrollTop = 0;
   $("#clipdlg [data-act='closedlg']").focus();
 }
+/* Background music is saved with a style or applied to a single rendered clip. */
+const MUSIC_DEFAULT = {track:"", volume:12, original:100, duck:true};
+const musicDialog = $("#musicdlg");
+let musicCatalog, musicEdit;
+
+function musicSummary(mix) {
+  const track = (musicCatalog || []).find(t => t.id === mix?.track);
+  return track ? `${track.title} · ${mix.volume}%` : mix?.track ? `Background track · ${mix.volume}%` : "No music";
+}
+
+function clipMusicButton(c) {
+  const ready = c.status === "done";
+  const mix = c.music || c.look?.music;
+  return `<div class="row"><button type="button" class="btn sm" data-act="musicclip"${ready ? "" : " disabled"}>
+    ${ic("plus")}${mix?.track ? "Edit music" : "Add music"}</button><span class="sub">${ready ? esc(musicSummary(mix)) : "Available when the clip is ready"}</span></div>
+    ${c.music_error ? `<p class="err" role="alert">Music update failed. ${esc(c.music_error)}</p>` : ""}`;
+}
+
+async function openMusic(place) {
+  if (musicDialog.open) return;
+  const style = place === "style" ? S.tplEdit : null;
+  if (place === "style" && !style) return;
+  const job = style ? null : jobOf(D.jid);
+  const clip = job?.clips.find(x => x.id === D.cid);
+  if (!style && clip?.status !== "done") return;
+  const tracks = musicCatalog ||= await api("/api/music");
+  if (musicDialog.open || (style ? S.tplEdit !== style : D.jid !== job.id || D.cid !== clip.id || !$("#clipdlg").open)) return;
+  const base = style ? style.look.music : clip.music || clip.look?.music;
+  const state = {style, job, clip, version:clip?.version || 0, mix:{...MUSIC_DEFAULT, ...base}, previewUrl:"", shown:24};
+  musicEdit = state;
+  $("#clipdlg video")?.pause();
+  musicDialog.innerHTML = `<div class="music-panel">
+    <header class="row"><h2>Background music</h2><span class="grow"></span><button type="button" class="btn icon ghost" data-music-action="close" aria-label="Close">${ic("x")}</button></header>
+    <div class="music-body">
+      <label class="f">Search tracks<input id="music-search" type="search" placeholder="Title, mood, artist, or genre" autocomplete="off"></label>
+      <label class="f">Genre<select id="music-genre"><option value="">All genres</option>
+        ${[...new Set(tracks.map(t => t.genre))].sort().map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join("")}</select></label>
+      <div id="music-count" class="sub" aria-live="polite"></div>
+      <div id="music-tracks" class="music-tracks" role="group" aria-label="Music tracks"></div>
+      <button type="button" class="btn sm ghost" data-music-action="more" hidden>Show more tracks</button>
+      <audio id="music-track-audio" controls preload="none" hidden></audio>
+      <div class="two music-levels">
+        <label class="f">Music volume <output data-music-level="volume">${state.mix.volume}%</output><input type="range" min="0" max="100" value="${state.mix.volume}" data-music-input="volume"></label>
+        <label class="f">Original audio <output data-music-level="original">${state.mix.original}%</output><input type="range" min="0" max="100" value="${state.mix.original}" data-music-input="original"></label>
+      </div>
+      <label class="sw"><input type="checkbox" data-music-input="duck"${state.mix.duck ? " checked" : ""}>Lower music during speech</label>
+      <p class="sub" id="music-choice" aria-live="polite"></p>
+      <button type="button" class="btn sm" data-music-action="mix">${clip ? "Preview mix · first 15 seconds" : "Preview mix with sample video"}</button>
+      <video id="music-mix-video" controls playsinline preload="none" hidden></video>
+      <div id="music-feedback" role="status" class="sub"></div>
+    </div>
+    <footer class="row"><button type="button" class="btn ghost" data-music-action="remove">Remove music</button><span class="grow"></span>
+      <button type="button" class="btn primary" data-music-action="apply">${style ? "Use in style" : "Update video"}</button></footer>
+  </div>`;
+  paintMusicTracks();
+  musicDialog.showModal();
+  $("#music-search").focus();
+}
+
+function paintMusicTracks() {
+  const query = $("#music-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const genre = $("#music-genre").value;
+  const rows = musicCatalog.filter(t => (!genre || t.genre === genre)
+    && query.every(term => `${t.title} ${t.mood} ${t.genre} ${t.artist}`.toLowerCase().includes(term)));
+  const visible = rows.slice(0, musicEdit.shown);
+  put($("#music-tracks"), visible.map(t => `<div class="music-track">
+    <button type="button" class="music-select" data-music-action="choose" data-track="${esc(t.id)}" aria-pressed="${musicEdit.mix.track === t.id}">
+      <strong>${esc(t.title)}</strong><span class="sub">${esc(t.genre)} · ${esc(t.mood)} · ${t.bpm} BPM · ${fmt(t.seconds)}</span>
+    </button><button type="button" class="btn sm ghost" data-music-action="listen" data-track="${esc(t.id)}" aria-label="Preview ${esc(t.title)}">Play</button>
+  </div>`).join("") || `<p class="sub">No tracks match your search.</p>`);
+  $("#music-count").textContent = `${visible.length} of ${rows.length} tracks · CC0`;
+  musicDialog.querySelector('[data-music-action="more"]').hidden = visible.length >= rows.length;
+  musicChoice();
+}
+
+function musicChoice() {
+  const track = musicCatalog.find(t => t.id === musicEdit.mix.track);
+  put($("#music-choice"), track ? `${esc(musicSummary(musicEdit.mix))} · ${esc(track.artist)} ·
+    <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener noreferrer">CC0</a>
+    ${track.source ? ` · <a href="${esc(track.source)}" target="_blank" rel="noopener noreferrer">Source</a>` : ""}` : "No music");
+}
+
+function resetMusicPreview(state) {
+  state.controller?.abort();
+  state.controller = null;
+  const preview = $("#music-mix-video");
+  if (preview) {
+    preview.pause();
+    preview.removeAttribute("src");
+    preview.load();
+    preview.hidden = true;
+  }
+  if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+  state.previewUrl = "";
+}
+
+musicDialog.addEventListener("close", () => {
+  if (!musicEdit) return;
+  $("#music-track-audio").pause();
+  resetMusicPreview(musicEdit);
+  musicEdit = null;
+});
+
+musicDialog.addEventListener("input", e => {
+  const state = musicEdit, input = e.target;
+  if (!state) return;
+  if (input.id === "music-search" || input.id === "music-genre") {
+    state.shown = 24;
+    $("#music-tracks").scrollTop = 0;
+    return paintMusicTracks();
+  }
+  const key = input.dataset.musicInput;
+  if (!key) return;
+  state.mix[key] = key === "duck" ? input.checked : Number(input.value);
+  if (key !== "duck") $(`[data-music-level="${key}"]`).textContent = `${input.value}%`;
+  musicChoice();
+  resetMusicPreview(state);
+  $("#music-feedback").textContent = "";
+});
+
+musicDialog.addEventListener("click", async e => {
+  const button = e.target.closest("[data-music-action]"), state = musicEdit;
+  if (!button || !state) return;
+  const {musicAction: action, track} = button.dataset;
+  const audio = $("#music-track-audio"), feedback = $("#music-feedback");
+  if (action === "close") return musicDialog.close();
+  if (action === "more") {
+    state.shown += 24;
+    paintMusicTracks();
+    return;
+  }
+  if (action === "choose" || action === "remove") {
+    state.mix.track = action === "remove" ? "" : track;
+    resetMusicPreview(state);
+    feedback.textContent = "";
+    return paintMusicTracks();
+  }
+  if (action === "listen") {
+    resetMusicPreview(state);
+    audio.hidden = false;
+    audio.src = `/api/music/${encodeURIComponent(track)}/audio`;
+    return audio.play().catch(() => { feedback.textContent = "This track couldn’t play. Try it again or choose another track."; });
+  }
+  button.disabled = true;
+  try {
+    const path = state.clip ? `/api/jobs/${encodeURIComponent(state.job.id)}/clips/${encodeURIComponent(state.clip.id)}/music` : "";
+    const body = {music: state.mix, version: state.version};
+    if (action === "mix") {
+      resetMusicPreview(state);
+      audio.pause();
+      const controller = new AbortController();
+      state.controller = controller;
+      feedback.textContent = "Preparing preview…";
+      const response = await fetch(state.clip ? path + "/preview" : "/api/music/preview", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(body), signal:controller.signal});
+      if (!response.ok) throw new Error((await response.json()).detail || "Couldn't preview this mix.");
+      const blob = await response.blob();
+      if (musicEdit !== state || controller.signal.aborted) return;
+      const video = $("#music-mix-video");
+      state.previewUrl = URL.createObjectURL(blob);
+      video.src = state.previewUrl;
+      video.hidden = false;
+      feedback.textContent = "";
+      await video.play().catch(() => {});
+    } else if (action === "apply") {
+      if (state.style) {
+        state.style.look.music = {...state.mix};
+        state.style.dirty = true;
+        musicDialog.close();
+        tplCtl();
+      } else {
+        await send(path, body);
+        if (musicEdit === state) musicDialog.close();
+        await tick();
+        toast("Updating the clip's audio.", "ok");
+      }
+    }
+  } catch (error) {
+    if (error.name !== "AbortError" && musicEdit === state) feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 function openClip(jid, cid) { D.jid = jid; D.cid = cid; D.sig = ""; drawClipDlg(true); $("#clipdlg").showModal(); }
 function drawClipDlg(full) {
   const j = jobOf(D.jid), c = j?.clips.find(x => x.id === D.cid), dlg = $("#clipdlg");
@@ -6105,6 +6311,7 @@ function drawClipDlg(full) {
         ${["done", "error"].includes(c.status) ? `<div class="ce3-f"><label>Style</label><div class="ce3-tpl">${tplChip("cd_tpl", tplOf(c.template) ? c.template : "", {made: !tplOf(c.template)})}
           <button class="btn sm primary" data-act="cdremake" hidden>${ic("scissors")}Make again</button></div>
           ${c.soft ? `<p class="hq-note">${ic("warn")}This video is low quality, so the zoomed-in part may look soft.</p>` : ""}</div>` : ""}
+        <div id="dclipmusic" class="ce3-f"></div>
         <div class="ce3-line"></div>
         <div id="dposts"></div>
         ${c.status !== "done" ? `<p class="ce2-note">${c.status === "error" ? "This clip couldn't be made, so it can't be posted." : "It can be posted once it's made."}</p>` : postSoon() ? soonBox() : accs.length ? (accs.every(gone) ? `<p class="ce2-note">It's going to every account you have.</p>` : `
@@ -6113,12 +6320,13 @@ function drawClipDlg(full) {
           <div id="cdlater" hidden><div id="cdcal"></div><div id="schtp"></div></div>
           <button class="btn primary ce-go" data-act="cdgo">${ic("send")}Post now</button>`)
         : `<div class="ce-empty">${ic("plug")}<span>Connect an account to post.</span><button class="btn sm" data-act="go" data-v="settings" data-t="apps">Connect</button></div>`}
-        <div class="ce-foot">${c.status === "done" ? `<a class="btn sm ghost" href="${m}${esc(c.file)}?download=1">${ic("down")}Download</a>` : ""}<span class="grow"></span>
+        <div class="ce-foot">${c.status === "done" ? `<a class="btn sm ghost" href="${m}${esc(c.file)}?download=1&amp;v=${c.version || 0}">${ic("down")}Download</a>` : ""}<span class="grow"></span>
           <button class="btn sm ghost" data-act="delclip" data-j="${j.id}" data-c="${esc(c.id)}">${ic("trash")}Delete</button></div>
       </div></div>`;
     cdCal(); schTp(); cdLabel(); vpWire();
   } else if (D.sig !== sig) { $("#stage").innerHTML = stage; vpWire(); }
   D.sig = sig;
+  put($("#dclipmusic"), clipMusicButton(c));
   put($("#dposts"), c.status === "done" ? clipWhere(c, true) : "");
 }
 // The clip as it will look with the changes, drawn over its own cover frame: the video band where the layout puts it,
@@ -6676,6 +6884,7 @@ document.addEventListener("click", async e => {
     if (a === "tour") return startTour();
     if (a === "whatsnew") return go("updates");
     if (a.startsWith("tpl") || a === "gotpls" || a === "cbopts" || a === "cbsave") return tplAct(a, d);
+    if (a === "musicclip" || a === "musicstyle") return await openMusic(a === "musicstyle" ? "style" : "clip");
     if (a === "cdremake") { const v = $("#cd_tpl")?.value; if (!v) return;
       await send(`/api/jobs/${D.jid}/clips/${D.cid}/render`, {template: v}); toast("Making it again in this style. Posts wait for the new version.", "ok"); await tick(); return drawClipDlg(true); }
     if (a === "settab") { e.preventDefault(); if (S.tplEdit?.dirty && !await ask("Leave without saving?", "Your changes to this style are lost.", "Leave", true)) return;

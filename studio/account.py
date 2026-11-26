@@ -38,6 +38,7 @@ def delete_clip(jid: str, cid: str) -> bool:
     for stem in {cid, Path(str(clip.get("file") or cid)).stem}:     # the captions and the notes kept beside the clip
         for ext in ("ass", "json"):
             (d / "clips" / f"{stem}.{ext}").unlink(missing_ok=True)
+    (d / "clips" / f"{cid}.clean.m4a").unlink(missing_ok=True)
     src = clip.get("src")
     if src:                                        # the piece of video fetched or recorded just for this clip
         p = Path(src)

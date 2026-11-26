@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from . import config, roman, hook_art, stacked, templates
+from . import config, roman, hook_art, music, stacked, templates
 from .media import NO_WINDOW, run
 
 W, H = config.OUT_W, config.OUT_H
@@ -793,6 +793,7 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
         meta = {"title": clip.get("title") or "", "description": clip.get("description") or "", "comment": clip.get("description") or ""}
         if image_hook:
             hook_art.make(_clean(clip["hook"]), W, brush=True).save(work / "hook.png")
+        look["music"] = music.clean(clip["music"] if "music" in clip else look.get("music"))
         got = _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, look=look, cam=cam, crop=crop, face=face, info=info, extras=extras, meta=meta, hook_y=hook_y if image_hook else None)
         return dict(got, layout=requested if requested == "stacked" else layout)
     finally:
@@ -865,6 +866,17 @@ def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layo
     cover_t = min(1.2, (end - start) / 2)
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{cover_t:.2f}", "-i", f"{name}.mp4", "-frames:v", "1",
          "-q:v", "3", f"{name}.jpg"], cwd=work)
+    clean = out_dir / f"{name}.clean.m4a"
+    settings = look.get("music") or music.DEFAULT
+    if music.active(settings) or clean.is_file():
+        original = work / "clean.m4a"
+        video = work / f"{name}.mp4"
+        music.extract_clean(video, original, music.duration(video))
+        if music.active(settings):
+            mixed = work / "mixed.mp4"
+            music.mix(video, original, mixed, settings)
+            mixed.replace(video)
+        shutil.move(str(original), str(clean))
     for ext in ("mp4", "jpg", "ass"):
         shutil.move(str(work / f"{name}.{ext}"), str(out_dir / f"{name}.{ext}"))
     return {"file": f"{name}.mp4", "cover": f"{name}.jpg"}
