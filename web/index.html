@@ -2058,6 +2058,8 @@ textarea.cpg-in{height:auto;padding:8px 12px;resize:vertical}.cpg-in:focus{borde
 .tp9-cap span{display:inline-block;transform-origin:center}
 .tp9-hook{position:absolute;left:50%;transform:translate(-50%,-50%);background:#fff;color:#14100E;border-radius:2.4cqw;padding:1.8cqw 3.4cqw;font:800 5.2cqw/1.15 "pcf Poppins ExtraBold",Poppins,sans-serif;white-space:nowrap;min-width:30cqw;min-height:5cqw}
 .tp9.mini .tp9-hook{padding:0;min-width:34cqw;min-height:7cqw;border-radius:2cqw}
+.tp9-mark{position:absolute;left:50%;transform:translate(-50%,-50%);max-width:90%;color:#fff;font:700 3.2cqw/1.2 "pcf Poppins ExtraBold",Poppins,sans-serif;text-align:center;white-space:nowrap;text-shadow:0 0 0.4cqw #000,0 0 0.8cqw #000;pointer-events:auto;z-index:2}
+.tp9.mini .tp9-mark{font-size:2.4cqw}
 .tp9 .drag{cursor:ns-resize;touch-action:none;outline:1px dashed transparent;outline-offset:1.4cqw;transition:outline-color .15s ease}
 .tp9 .drag:hover,.tp9.dragging .drag{outline-color:rgba(255,255,255,.75)}
 .tp9-guide{position:absolute;left:0;right:0;border-top:1px dashed var(--brand);pointer-events:none}
@@ -2133,8 +2135,8 @@ textarea.cpg-in{height:auto;padding:8px 12px;resize:vertical}.cpg-in:focus{borde
 .tp9-cap .cbg{display:inline-block;-webkit-text-stroke:inherit}
 .tp9-hook{transition:none}
 .tp9 .drag::after{content:attr(data-name);position:absolute;left:50%;top:0;transform:translate(-50%,calc(-100% - 2.2cqw));font:700 11px/1 system-ui,sans-serif;color:#fff;background:var(--brand);padding:4px 7px;border-radius:6px;-webkit-text-stroke:0;text-shadow:none;letter-spacing:0;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .15s ease}
-.tp9 .drag:hover::after,.tp9.f-hook .tp9-hook.drag::after,.tp9.f-cap .tp9-cap.drag::after{opacity:1}
-.tp9.f-hook .tp9-hook.drag,.tp9.f-cap .tp9-cap.drag{outline:1px dashed rgba(255,255,255,.9);outline-offset:1.4cqw}
+.tp9 .drag:hover::after,.tp9.f-hook .tp9-hook.drag::after,.tp9.f-cap .tp9-cap.drag::after,.tp9.f-mark .tp9-mark.drag::after{opacity:1}
+.tp9.f-hook .tp9-hook.drag,.tp9.f-cap .tp9-cap.drag,.tp9.f-mark .tp9-mark.drag{outline:1px dashed rgba(255,255,255,.9);outline-offset:1.4cqw}
 .tp9-cap.drag{left:auto;right:auto;left:50%;transform:translate(-50%,-50%);width:max-content;max-width:94%}
 /* ---- the streamer cam */
 .tp9-cam{position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.5cqw;background:rgba(124,58,237,.55);border:.5cqw dashed rgba(255,255,255,.85);color:rgba(255,255,255,.92);border-radius:1.6cqw;overflow:hidden;z-index:1}
@@ -2160,7 +2162,7 @@ textarea.cpg-in{height:auto;padding:8px 12px;resize:vertical}.cpg-in:focus{borde
 .camf-box b{position:absolute;left:16px;top:0;background:var(--brand);color:#fff;font-size:11px;padding:2px 6px;border-radius:0 0 6px 6px}
 @media (max-width:700px){.camf{grid-template-columns:1fr}}
 /* captions and the heading always sit over the cam, as they do in the clip */
-.tp9-cap,.tp9-hook{z-index:2}.tp9 .tp9-guide{z-index:3}
+.tp9-cap,.tp9-hook,.tp9-mark{z-index:2}.tp9 .tp9-guide{z-index:3}
 .tp9-cam.real{background:transparent;border:0}
 .tp9-cam.real video,.tp9-cam.real img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .tp9-cam.real b{position:absolute;left:1.6cqw;top:1.6cqw;background:var(--brand);color:#fff;padding:.9cqw 1.6cqw;border-radius:1cqw;font-size:2.8cqw}
@@ -5397,9 +5399,13 @@ function tplPrev(look, o = {}) {
     + (h.bg === false ? "background:none;" : `background:#${h.bgc || "FFFFFF"};`)
     + ((h.outline ?? (h.bg === false ? 6 : 0)) ? `-webkit-text-stroke:${tplPx((h.outline ?? 6) * 2)} #000;paint-order:stroke fill;` : "-webkit-text-stroke:0;");
   const hook = h.show ? `<div class="tp9-hook${o.edit ? " drag" : ""}" data-drag="hook" data-name="Heading" style="${hst}">${o.mini ? "" : h.upper ? "HE ACTUALLY DID IT 😭" : "he actually did it 😭"}</div>` : "";
+  const mk = look.mark || {}, markTxt = (mk.text || "").trim();
+  const markOp = Math.max(20, Math.min(60, Number(mk.opacity) || 35)) / 100;
+  const markY = mk.y != null ? mk.y : 92;
+  const mark = markTxt && !o.mini ? `<div class="tp9-mark${o.edit ? " drag" : ""}" data-drag="mark" data-name="Watermark" style="top:${Number(markY).toFixed(1)}%;opacity:${markOp}">${esc(markTxt)}</div>` : "";
   if (o.play) S.tplPlay[o.play] = look;
   const n = Math.max(1, Math.min(look.cap.per, 5)), group = o.play ? Math.floor(performance.now() / 1000 / TPL_STEP / n) : null;
-  return `<div class="tp9${o.mini ? " mini" : ""}${o.focus ? " f-" + o.focus : ""}"${o.play ? ` data-play="${esc(o.play)}"` : ""}>${band}${cam}${hook}${tplCap(look, {...o, group})}${o.edit ? `<div class="tp9-guide" hidden></div>` : ""}</div>`;
+  return `<div class="tp9${o.mini ? " mini" : ""}${o.focus ? " f-" + o.focus : ""}"${o.play ? ` data-play="${esc(o.play)}"` : ""}>${band}${cam}${hook}${mark}${tplCap(look, {...o, group})}${o.edit ? `<div class="tp9-guide" hidden></div>` : ""}</div>`;
 }
 // One clock for every preview on the page: the words move on every TPL_STEP seconds, and the sample videos are
 // kept at the same point, so a page of styles plays as one.
@@ -5611,14 +5617,14 @@ function drawTplEditor(body) {
   body.innerHTML = `<div class="tpe"><div class="tpe-top"><button class="btn sm ghost" data-act="tplback">${ic("caret").replace("<svg", '<svg class="back"')}Styles</button>
       <input class="tpe-name" id="tpe_name" maxlength="40" value="${esc(E.name)}" aria-label="Style name" placeholder="Style name">
       <span class="grow"></span><button class="btn ghost" data-act="tplvideo">${ic("film")}Preview video</button><button class="btn primary" data-act="tplsave">${ic("check")}Save changes</button></div>
-    <div class="tpe-body"><div class="tpe-l"><div class="tpe-stage" id="tpestage"></div><p class="tpe-hint">Drag the captions or the heading to move them.</p></div>
+    <div class="tpe-body"><div class="tpe-l"><div class="tpe-stage" id="tpestage"></div><p class="tpe-hint">Drag the captions, the heading or the watermark to move them.</p></div>
       <div class="tpe-r"><div class="seg tpe-tabs" role="tablist">${[["captions", "Captions"], ["heading", "Heading"], ["layout", "Layout"], ["music", "Music"]].map(([k, l]) =>
         `<button type="button" role="tab" data-act="tpltab" data-k="${k}" aria-pressed="${E.tab === k}">${l}</button>`).join("")}</div><div id="tpectl"></div></div></div></div>`;
   tplPaint(); tplCtl();
 }
 function tplPaint() {
   const st = $("#tpestage"), E = S.tplEdit; if (!st) return;
-  const focus = E.tab === "heading" ? "hook" : E.tab === "captions" ? "cap" : "video";
+  const focus = E.tab === "heading" ? (E.focusMark ? "mark" : "hook") : E.tab === "captions" ? "cap" : "video";
   const old = st.querySelector(".tp9"), vid = st.querySelector("video.tpv");
   // the same layout: only the words and the heading change, so the video keeps playing
   const key = E.look.layout + JSON.stringify([E.look.cam, E.look.cam_style, E.look.cam_src, E.look.game_src]);
@@ -5626,7 +5632,7 @@ function tplPaint() {
     const fresh = document.createElement("div"); fresh.innerHTML = tplPrev(E.look, {edit: true, play: "edit", focus});
     const n = fresh.firstElementChild;
     old.className = n.className;
-    for (const sel of [".tp9-hook", ".tp9-cap"]) { const a = old.querySelector(":scope > " + sel), b = n.querySelector(":scope > " + sel);
+    for (const sel of [".tp9-hook", ".tp9-cap", ".tp9-mark"]) { const a = old.querySelector(":scope > " + sel), b = n.querySelector(":scope > " + sel);
       if (a && b) a.replaceWith(b); else if (a) a.remove(); else if (b) old.querySelector(":scope > .tp9-guide").before(b); }
     return;
   }
@@ -5678,14 +5684,21 @@ function tplCtl() {
         <div class="tpe-row"><span>Words at a time</span><div class="seg tpe-per">${[1, 2, 3, 4, 5].map(v => `<button type="button" data-tf="cap.per" data-v="${v}" aria-pressed="${c.per === v}">${v}</button>`).join("")}</div></div>
         ${toggle("cap.upper", "Capital letters", c.upper)}${place("cap.y", c.y)}</div>`;
   } else if (E.tab === "heading") {
-    const h = E.look.hook;
+    E.look.mark ||= {text: "", opacity: 35, y: 92};
+    const h = E.look.hook, mk = E.look.mark;
     const pre = presets(HOOK_PRESETS, {...h, outline: h.outline ?? (h.bg ? 0 : 6)}, v => ({...E.look, hook: {...h, ...v, show: true, y: 50}, cap: {...c, y: 85}, layout: "crop", cam: null}));
     box.innerHTML = `<div class="tpe-sec">${toggle("hook.show", "Show the heading", h.show)}</div>
       ${h.show ? `${pre}<div class="tpe-sec"><h4>Font</h4>${fonts("hook.font")}</div>
       <div class="tpe-sec"><h4>Colours</h4>${colors("hook.color", "Text")}${toggle("hook.bg", "Box behind the heading", h.bg)}${h.bg ? colors("hook.bgc", "Box colour") : ""}
         ${range("hook.outline", "Outline", 0, 14, h.outline ?? (h.bg ? 0 : 6), v => v ? v : "None")}</div>
       <div class="tpe-sec"><h4>Size and letters</h4>${range("hook.size", "Size", 60, 160, h.size || 96, v => v < 85 ? "Small" : v < 115 ? "Medium" : "Large")}${toggle("hook.upper", "Capital letters", !!h.upper)}</div>
-      <div class="tpe-sec"><h4>Place</h4>${place("hook.y", h.y)}</div>` : ""}`;
+      <div class="tpe-sec"><h4>Place</h4>${place("hook.y", h.y)}</div>` : ""}
+      <div class="tpe-sec"><h4>Watermark</h4>
+        <p class="tpe-note">Faint text on every clip. Clear the box to remove it. Drag it on the preview to place it.</p>
+        <label class="f"><span class="ot" style="margin:0">Text</span>
+          <input id="tpe_mark" maxlength="40" autocomplete="off" value="${esc(mk.text || "")}" placeholder="@your.handle" aria-label="Watermark text"></label>
+        ${range("mark.opacity", "Opacity", 20, 60, mk.opacity ?? 35, v => v + "%")}
+        ${place("mark.y", mk.y ?? 92)}</div>`;
   } else {
     const lay = Object.entries(S.tpl.layouts || {}).map(([k, l]) => tile("layout", k, `${tplPrev({...E.look, layout: k, hook: {...E.look.hook, show: false}, cap: {...c, y: null}}, {mini: true})}<em>${esc(l)}</em>`, E.look.layout === k)).join("");
     E.look.cam_style ||= {r: 0, bw: 0, bc: "FFFFFF"};
@@ -5718,10 +5731,16 @@ document.addEventListener("click", e => {
 document.addEventListener("input", e => {
   const t = e.target; if (!S.tplEdit) return;
   if (t.id === "tpe_name") { S.tplEdit.name = t.value; S.tplEdit.dirty = true; return; }
+  if (t.id === "tpe_mark") {
+    S.tplEdit.look.mark ||= {text: "", opacity: 35, y: 92};
+    S.tplEdit.look.mark.text = t.value.slice(0, 40); S.tplEdit.dirty = true; S.tplEdit.focusMark = true; return tplPaint();
+  }
   if (t.dataset.tr === "cam_style.bw" && (Number(t.value) > 0) !== (S.tplEdit.look.cam_style?.bw > 0)) { tplSet(t.dataset.tr, Number(t.value)); return tplCtl(); }
   if (t.dataset.tr) { tplSet(t.dataset.tr, Number(t.value)); const b = t.nextElementSibling; if (b) b.textContent = t.dataset.tr === "cap.size" ? (t.value < 95 ? "Small" : t.value < 140 ? "Medium" : "Large") : t.dataset.tr === "hook.size" ? (t.value < 85 ? "Small" : t.value < 115 ? "Medium" : "Large")
+    : t.dataset.tr === "mark.opacity" ? (t.value + "%")
     : t.dataset.tr === "cam_style.r" ? (Number(t.value) >= 50 ? "Round" : Number(t.value) ? t.value + "%" : "None")
-    : t.dataset.tr === "cam_style.bw" ? (Number(t.value) ? t.value + " px" : "None") : (Number(t.value) || "None"); }
+    : t.dataset.tr === "cam_style.bw" ? (Number(t.value) ? t.value + " px" : "None") : (Number(t.value) || "None");
+    if (t.dataset.tr.startsWith("mark.")) S.tplEdit.focusMark = true; }
   if (t.dataset.tc) { tplSet(t.dataset.tc, t.value.slice(1).toUpperCase()); }
 });
 document.addEventListener("change", e => {
@@ -5823,13 +5842,17 @@ document.addEventListener("click", e => {
   if (S.tplEdit.tab !== "layout") { S.tplEdit.tab = "layout"; $$(".tpe-tabs button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === "layout"))); tplCtl(); tplPaint(); }
   const sec = $("#tpe-part"); if (sec) { sec.scrollIntoView({behavior: "smooth", block: "center"}); sec.classList.remove("flash"); void sec.offsetWidth; sec.classList.add("flash"); }
 });
-// dragging the captions or the heading up and down the preview; they snap to the top, middle and bottom guides
+// dragging the captions, heading or watermark up and down the preview; they snap to the top, middle and bottom guides
 document.addEventListener("pointerdown", e => {
   const el = e.target.closest("#tpestage [data-drag]"); if (!el || !S.tplEdit || el.dataset.drag === "cam") return;
-  const tab = el.dataset.drag === "hook" ? "heading" : "captions";
-  if (S.tplEdit.tab !== tab) { S.tplEdit.tab = tab; $$(".tpe-tabs button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === tab))); tplCtl(); $("#tpestage .tp9").className = "tp9 f-" + (tab === "heading" ? "hook" : "cap"); }
+  const key = el.dataset.drag;
+  const tab = key === "cap" ? "captions" : "heading";
+  S.tplEdit.focusMark = key === "mark";
+  if (S.tplEdit.tab !== tab) { S.tplEdit.tab = tab; $$(".tpe-tabs button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === tab))); tplCtl(); }
+  $("#tpestage .tp9").className = "tp9 f-" + (key === "hook" ? "hook" : key === "mark" ? "mark" : "cap");
   e.preventDefault();
-  const stage = $("#tpestage .tp9"), r = stage.getBoundingClientRect(), guide = $(".tp9-guide", stage), key = el.dataset.drag;
+  const stage = $("#tpestage .tp9"), r = stage.getBoundingClientRect(), guide = $(".tp9-guide", stage);
+  S.tplEdit.look[key] ||= key === "mark" ? {text: "", opacity: 35, y: 92} : {};
   stage.classList.add("dragging"); el.setPointerCapture(e.pointerId);
   const move = ev => {
     let v = Math.max(5, Math.min(95, (ev.clientY - r.top) / r.height * 100));
@@ -5846,7 +5869,7 @@ async function tplAct(a, d) {
   if (a === "tplcopy") return tplOpen(tplOf(d.id), true);
   if (a === "tpledit") return tplOpen(tplOf(d.id), false);
   if (a === "tpltab") { S.tplEdit.tab = d.k; $$(".tpe-tabs button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === d.k))); tplPaint(); return tplCtl(); }
-  if (a === "tplauto") { tplSet(d.k, null); return tplCtl(); }
+  if (a === "tplauto") { tplSet(d.k, d.k === "mark.y" ? 92 : null); return tplCtl(); }
   if (a === "tplpre") {           // a preset: every option of that part at once; the captions keep their place
     const E = S.tplEdit, i = Number(d.i);
     if (d.k === "captions") Object.assign(E.look.cap, CAP_PRESETS[i][1]);

@@ -27,11 +27,14 @@ _CAP = {"show": True, "anim": "pop", "font": "Poppins ExtraBold", "color": "FFFF
         "shadow": False, "size": 132, "per": 3, "upper": True, "pop": 112, "y": None, "bg": False, "bgc": "000000"}
 # the heading: its font, text colour, and the rounded box behind it (on or off, and its colour)
 _HOOK = {"show": True, "y": None, "font": "Poppins ExtraBold", "color": "0E1014", "bg": True, "bgc": "FFFFFF"}
+# faint brand line on every clip (empty text: none); opacity is how solid it looks (20-60), y is % down the frame
+_MARK = {"text": "", "opacity": 35, "y": 92.0}
+_MARK_CTRL = re.compile(r"[\x00-\x1f]+")
 
 
-def _look(cap=None, layout="blur", hook=None, cam=None):
-    return {"cap": {**_CAP, **(cap or {})}, "hook": {**_HOOK, **(hook or {})}, "layout": layout, "cam": cam,
-            "cam_src": None, "game_src": None}
+def _look(cap=None, layout="blur", hook=None, cam=None, mark=None):
+    return {"cap": {**_CAP, **(cap or {})}, "hook": {**_HOOK, **(hook or {})}, "mark": {**_MARK, **(mark or {})},
+            "layout": layout, "cam": cam, "cam_src": None, "game_src": None}
 
 
 # the three caption styles from before templates, exactly as they were drawn (render.STYLES had them)
@@ -116,13 +119,19 @@ def clean_look(raw) -> dict:
     hook["outline"] = _num(h.get("outline"), 0, 14, 0 if hook["bg"] else 6)     # a black edge round the letters
     hook["size"] = _num(h.get("size"), 60, 160, 96)                                # 96: the classic heading's size
     hook["upper"] = bool(h.get("upper"))
+    m = raw.get("mark") if isinstance(raw.get("mark"), dict) else {}
+    mark_y = _pct(m.get("y") if m.get("y") not in (None, "") else _MARK["y"])
+    mark = {"text": _MARK_CTRL.sub(" ", str(m.get("text") or "")).strip()[:40],
+            "opacity": _num(m.get("opacity"), 20, 60, _MARK["opacity"]),
+            "y": mark_y if mark_y is not None else _MARK["y"]}
     from . import facecam
     # drawn by hand on the video (shares of its frame): where the cam is in the stream (None: found by AI), and the
     # part of the video to show (None: all of it)
     cs = raw.get("cam_style") if isinstance(raw.get("cam_style"), dict) else {}
     # the cam's look: rounded corners (radius as % of the box's shorter side: 50 is fully round), and a border
     cam_style = {"r": _num(cs.get("r"), 0, 50, 0), "bw": _num(cs.get("bw"), 0, 24, 0), "bc": _hex(cs.get("bc"), "FFFFFF")}
-    return {"cap": cap, "hook": hook, "cam": _cam(raw.get("cam")), "cam_style": cam_style, "cam_src": facecam.clean(raw.get("cam_src")),
+    return {"cap": cap, "hook": hook, "mark": mark, "cam": _cam(raw.get("cam")), "cam_style": cam_style,
+            "cam_src": facecam.clean(raw.get("cam_src")),
             "game_src": facecam.clean(raw.get("game_src")),
             "music": music.clean(raw.get("music")),
             "auto_music": raw.get("auto_music") is True,

@@ -362,8 +362,33 @@ def _in_script(text, script) -> bool:
     return bool(rx and letters and sum(1 for c in letters if rx.match(c)) >= len(letters) / 2)
 
 
+def _mark_events(mark, dur) -> list:
+    """Faint watermark from the style: one line, full clip, placed by mark.y (% of the frame)."""
+    if not isinstance(mark, dict):
+        return []
+    text = _clean(mark.get("text") or "")[:40]
+    if not text:
+        return []
+    try:
+        opacity = max(20, min(60, int(round(float(mark.get("opacity", 35))))))
+    except (TypeError, ValueError):
+        opacity = 35
+    try:
+        y = max(5.0, min(95.0, float(mark.get("y", 92))))
+    except (TypeError, ValueError):
+        y = 92.0
+    alpha = f"{round((100 - opacity) / 100 * 255):02X}"   # ASS: 00 opaque, FF invisible
+    size, font = 40, HOOK["font"]
+    f = _Font.get(font)
+    if f.width(text, size) > 960:
+        size = max(24, int(size * 960 / f.width(text, size)))
+    py = H * y / 100
+    return [f"Dialogue: 2,{_ts(0)},{_ts(dur)},Mark,,0,0,0,,{{\\an5\\pos({W // 2},{py:.0f})\\fs{size}"
+            f"\\alpha&H{alpha}&\\c&HFFFFFF&\\bord2\\3c&H000000&\\3a&H{alpha}&}}{text}"]
+
+
 def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, note="", info=None, show_hook=True, hook_look=None,
-              script="") -> str:
+              script="", mark=None) -> str:
     """style_name: a template's caption settings (dict), or one of the old style names. script: "ur" or "hi" when the
     captions are in Urdu or Hindi script."""
     st = _cap_style(style_name)
@@ -387,6 +412,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Cap,{st['font']},{st['size']},&H00{st['base']},&H00{st['base']},&H00000000,&H70000000,0,0,0,0,100,100,0,0,1,{st['outline']},{st['shadow']},5,0,0,0,1
 Style: Hook,{HOOK['font']},{HOOK['size']},&H00{HOOK['ink']},&H00{HOOK['ink']},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
 Style: Note,{HOOK['font']},46,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,4,0,5,0,0,0,1
+Style: Mark,{HOOK['font']},40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,5,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -400,6 +426,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ns = max(26, int(ns * 940 / nf.width(note, ns)))
         ny = ((info or {}).get("bottom") or hook_y) + 50
         ev.append(f"Dialogue: 4,{_ts(0)},{_ts(dur)},Note,,0,0,0,,{{\\an5\\pos({W // 2},{ny:.0f})\\fs{ns}}}{note}")
+    ev.extend(_mark_events(mark, dur))
     f = _Font.get(st["font"])
     inside = [dict(w, w=_clean(w["w"])) for w in words if w["s"] >= start - 0.05 and w["s"] < end]
     inside = sorted((w for w in inside if w["w"]), key=lambda w: w["s"])
@@ -782,7 +809,7 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     image_hook = layout == "stacked" and look["hook"]["show"] and _clean(clip.get("hook", ""))
     ass = build_ass(words if show_caps else [], start, end, "" if image_hook else clip.get("hook", ""), look["cap"], clip.get("highlight_words", []),
                     hook_y, cap_y, note=extras.get("note", ""), info=info, show_hook=look["hook"]["show"],
-                    hook_look=look["hook"], script=clip.get("script") or "")
+                    hook_look=look["hook"], script=clip.get("script") or "", mark=look.get("mark"))
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
     # open files whose full path is longer than 260 characters on Windows, which a data folder deep inside other
     # folders easily reaches. Inside the work folder every name is short and relative (a drive colon would also

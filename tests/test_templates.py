@@ -126,6 +126,15 @@ with ctx.as_user(u.id):
     check("a boxed heading can have an outline too", "\\bord4" in render.build_ass(words, 0, 4, "hello", lk["cap"], [], 400, 1400, hook_look=lk["hook"]))
     check("a heading without a box gets an outline by default", templates.clean_look({"hook": {"bg": False}})["hook"]["outline"] == 6)
 
+    # watermark on the style: faint text, place and opacity
+    check("no watermark by default", templates.clean_look({})["mark"] == {"text": "", "opacity": 35, "y": 92.0})
+    mk = templates.clean_look({"mark": {"text": "  @lazy.clips\x00 ", "opacity": 9, "y": 200}})["mark"]
+    check("watermark text is trimmed and opacity/place are clamped",
+          mk == {"text": "@lazy.clips", "opacity": 20, "y": 95.0}, str(mk))
+    ass_m = render.build_ass(words, 0, 4, "hi", "bounce", [], 400, 1400, mark={"text": "@brand", "opacity": 35, "y": 90})
+    check("a watermark is drawn into the captions file", ",Mark,," in ass_m and "@brand" in ass_m and "\\pos(540," in ass_m)
+    check("an empty watermark is left out", ",Mark,," not in render.build_ass(words, 0, 4, "hi", "bounce", [], 400, 1400, mark={"text": "", "opacity": 35, "y": 92}))
+
     # boxes drawn by hand: where the cam is in the stream, and the part of the video to show
     lk = templates.clean_look({"cam": {"x": 0, "y": 0, "w": 100, "h": 40}, "cam_src": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.3},
                                "game_src": {"x": 0.25, "y": 0, "w": 0.5, "h": 1}})
