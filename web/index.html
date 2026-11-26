@@ -2585,14 +2585,26 @@ function playerSrc(k, e) {
 }
 // YouTube wouldn't hand a video over: a next step, not an error. The same link with "ss" before youtube.com opens a
 // download page for that exact video; the downloaded file comes back through the normal upload.
-const ytId = u => { try { const x = new URL(u); return x.hostname.endsWith("youtu.be") ? x.pathname.slice(1).split("/")[0]
-  : x.searchParams.get("v") || (x.pathname.match(/^\/(?:live|shorts|embed)\/([\w-]{6,})/) || [])[1] || ""; } catch { return ""; } };
-const ssLink = u => { const id = ytId(u); return id ? `https://www.ssyoutube.com/watch?v=${encodeURIComponent(id)}` : u.replace(/\/\/(www\.|m\.)?youtube\.com/, "//www.ssyoutube.com"); };
+function ytId(url) {
+  try {
+    const video = new URL(url);
+    if (!["http:", "https:"].includes(video.protocol)) return "";
+    const host = video.hostname, shortLink = host === "youtu.be";
+    if (!shortLink && host !== "youtube.com" && !host.endsWith(".youtube.com")) return "";
+    const id = shortLink ? video.pathname.split("/")[1]
+      : video.searchParams.get("v") || video.pathname.match(/^\/(?:live|shorts|embed)\/([\w-]+)/)?.[1];
+    return /^[\w-]{11}$/.test(id || "") ? id : "";
+  } catch { return ""; }
+}
 const isYtRefused = j => /^YouTube (didn't hand|isn't letting)/.test(j.error || "") && j.source?.type === "url";
-const getVid = j => `<div class="getvid"><span class="nc-ic">${ic("down")}</span><div><b>One quick step to get this video</b>
-    <span>YouTube didn't hand this one over. Download it in one click, then upload the file here. Your settings stay the same.</span></div>
-  <div class="gv-act"><a class="btn" href="${ssLink(j.source.url)}" target="_blank" rel="noopener noreferrer">${ic("down")}Download video</a>
+const getVid = j => {
+  const id = ytId(j.source.url);
+  const download = id ? `<a class="btn" href="https://www.ssyoutube.com/watch?v=${encodeURIComponent(id)}" target="_blank" rel="noopener noreferrer">${ic("down")}Download video</a>` : "";
+  return `<div class="getvid"><span class="nc-ic">${ic("down")}</span><div><b>One quick step to get this video</b>
+    <span>${download ? "YouTube didn't hand this one over. Download it in one click, then upload the file here." : "Upload a local copy of the video to continue."} Your settings stay the same.</span></div>
+  <div class="gv-act">${download}
     <button class="btn primary" data-act="regetfile" data-j="${esc(j.id)}">${ic("up")}Upload it</button></div></div>`;
+};
 // Posting needs at least one platform's app set up on this server (Settings, Connected apps, by an admin). Until then
 // people who aren't admins see a short note instead of posting controls; the admin sees how to set it up.
 const postSoon = () => !S.status.user?.is_admin && !Object.values(S.status.connect || {}).some(Boolean);
