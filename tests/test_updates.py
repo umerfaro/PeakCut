@@ -54,6 +54,13 @@ two = R(200, {"ahead_by": 2, "commits": [
     {"sha": "aaaaaaa1", "commit": {"message": "Connect TikTok in one click\n\nlong text", "committer": {"date": "2026-11-15T10:00:00Z"}}},
     {"sha": NEWER, "commit": {"message": "Captions always in English", "committer": {"date": "2026-11-16T10:00:00Z"}}}]})
 
+import subprocess
+
+parent = subprocess.check_output(["git", "rev-parse", "HEAD^"], cwd=config.ROOT, text=True).strip()
+gh.update(top=parent)
+check("an upstream release already merged locally does not show an update", updates.check(force=True), None)
+asked.clear()
+
 gh.update(top=here)
 check("up to date: no notice", updates.check(force=True), None)
 check("...and only the one small question was asked", [u.split("/")[-1] for u in asked], ["refs"])

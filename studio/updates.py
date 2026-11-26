@@ -93,6 +93,15 @@ def _what_changed(here: str):
     return int(d.get("ahead_by") or 0), notes[:20]
 
 
+def _includes_release(here: str, top: str) -> bool:
+    """A customized checkout may already contain the release under a local merge commit."""
+    try:
+        _git("merge-base", "--is-ancestor", top, here, timeout=5)
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def check(force: bool = False):
     """Look once. Returns what the dashboard should say, or None when this copy is up to date (or it cannot be told)."""
     if not ON:
@@ -107,7 +116,7 @@ def check(force: bool = False):
             top = newest() if here else ""
         except Exception:  # noqa: BLE001 - offline: what was known stays, and it is asked again in a minute
             return _state["result"]
-        if not top or top == here:
+        if not top or top == here or _includes_release(here, top):
             _state.update(result=None, seen=top)
             return None
         if top != _state["seen"] or _state["notes"] is None:      # a commit not seen before: ask what it brought, once
