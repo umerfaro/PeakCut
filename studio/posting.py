@@ -6,7 +6,7 @@ from pathlib import Path
 
 import json
 
-from . import accounts, alerts, config, creators, ctx, jobs, live
+from . import accounts, alerts, composio_post, config, creators, ctx, jobs, live
 
 _lock = threading.RLock()
 _FILE = config.DATA_DIR / "posts.json"
@@ -349,11 +349,10 @@ def _post(p):
         if acc["platform"] == "instagram" and reel_audio.get("account") == acc["id"]:
             rid, url = accounts.instagram_upload(acc, path, text, job["id"], audio=reel_audio)
         elif acc.get("via") == "composio":
-            from . import composio_post
             if acc["platform"] == "instagram":
-                rid, url = composio_post.post_instagram(acc, path, text)
+                rid, url = composio_post.post_instagram(acc, path, text, job["id"])
             elif acc["platform"] == "facebook":
-                rid, url = composio_post.post_facebook(acc, path, title, text)
+                rid, url = composio_post.post_facebook(acc, path, title, text, job["id"])
             else:
                 raise RuntimeError("That kind of account is no longer supported.")
         elif acc["platform"] == "youtube":
@@ -405,7 +404,7 @@ def _post(p):
             return
         wait = _retry_wait(p["error"])
         p["tries"] += 1
-        if p["tries"] < 3 and clip and acc:
+        if p["tries"] < 3 and clip and acc and not isinstance(e, composio_post.ConnectVideoSourceError):
             p.update(status="scheduled", due_at=time.time() + wait)  # try again in 10 minutes
         else:
             p["status"] = "failed"

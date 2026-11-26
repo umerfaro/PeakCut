@@ -6,6 +6,8 @@ os.environ.update(DATABASE_URL="", PEAKCUT_ACCOUNTS="1", PEAKCUT_PUBLIC_URL="htt
                   GOOGLE_CLIENT_ID="", GOOGLE_CLIENT_SECRET="", GOOGLE_CLIENT_FILE="")
 sys.path.insert(0, ".")
 from pathlib import Path
+from unittest.mock import patch
+from urllib.parse import urlsplit
 from fastapi.testclient import TestClient
 from studio import accounts, auth, composio_post, config, creators, ctx, db, jobs, posting, server
 db.init()
@@ -54,14 +56,17 @@ class Fake:
         calls.append((method, url, json or params or {}, headers or {}))
         if url.endswith("/connected_accounts"):
             return R(200, {"items": [
-                {"id": "ca_ig_secret", "status": "ACTIVE", "is_disabled": False, "toolkit": {"slug": "instagram"},
+                {"id": "ca_ig_secret", "user_id": "ig-owner", "status": "ACTIVE", "is_disabled": False, "toolkit": {"slug": "instagram"},
                  "state": {"val": {"access_token": "should-not-be-saved"}}},
-                {"id": "ca_fb_secret", "status": "ACTIVE", "is_disabled": False, "toolkit": {"slug": "facebook"}},
+                {"id": "ca_fb_secret", "user_id": "fb-owner", "status": "ACTIVE", "is_disabled": False, "toolkit": {"slug": "facebook"}},
                 {"id": "ca_old", "status": "EXPIRED", "is_disabled": False, "toolkit": {"slug": "instagram"}}], "next_cursor": None})
         if url.endswith("/files/upload/request"):
             return R(200, {"key": "projects/p/clip.mp4", "new_presigned_url": "https://storage.example/put",
                            "metadata": {"storage_backend": "s3"}})
+        if "/connected_accounts/" in url:
+            return R(200, {"user_id": "ig-owner"})
         slug = url.rsplit("/", 1)[-1]
+        assert json["user_id"] == ("ig-owner" if slug.startswith("INSTAGRAM_") else "fb-owner")
         if mode["fail"] and slug == "INSTAGRAM_POST_IG_USER_MEDIA":
             return R(200, {"successful": False, "error": "Instagram rejected the video.", "data": {}})
         answers = {
@@ -154,19 +159,24 @@ class Connect:
     def post(self, url, headers=None, json=None, timeout=None):
         calls.append(("MCP", url, json, headers or {}))
         name = json["params"]["name"]
-        code = (json["params"].get("arguments") or {}).get("code_to_execute") or ""
         if name == "COMPOSIO_MANAGE_CONNECTIONS":
             payload = {"successful": True, "data": {"results": {"instagram": {"accounts": [
                 {"id": "instagram_demo", "status": "active"}]}}}}
-        elif name == "COMPOSIO_MULTI_EXECUTE_TOOL":
-            payload = {"successful": True, "data": {"results": [{"response": {"successful": True, "data": {
-                "id": "17841", "username": "lazy.gta6.clips", "account_type": "MEDIA_CREATOR"}}}]}}
-        elif "base64.b64decode" in code:
-            payload = {"successful": True, "data": {"stdout": "32"}}
-        elif "MEDIA_PUBLISH" in code:
-            payload = {"successful": True, "data": {"stdout": 'PEAKCUT {"media_id": "media9", "permalink": "https://www.instagram.com/reel/z/", "error": ""}'}}
         else:
-            payload = {"successful": True, "data": {"stdout": 'PEAKCUT {"creation_id": "c9", "error": ""}'}}
+            assert name == "COMPOSIO_MULTI_EXECUTE_TOOL"
+            request = json["params"]["arguments"]["tools"][0]
+            slug, args = request["tool_slug"], request["arguments"]
+            answers = {
+                "INSTAGRAM_POST_IG_USER_MEDIA": {"id": "c9"},
+                "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH": {"id": "media9"},
+                "INSTAGRAM_GET_IG_MEDIA": {"id": "media9", "permalink": "https://www.instagram.com/reel/z/"},
+                "FACEBOOK_CREATE_VIDEO_POST": {"id": "vid9", "permalink_url": "/111/videos/vid9"},
+            }
+            if slug == "INSTAGRAM_POST_IG_USER_MEDIA":
+                assert args["video_url"].startswith(BASE + "/pub/") and "video_file" not in args
+            if slug == "FACEBOOK_CREATE_VIDEO_POST":
+                assert args["file_url"].startswith(BASE + "/pub/") and "video" not in args
+            payload = {"successful": True, "data": {"results": [{"response": {"successful": True, "data": answers[slug]}}]}}
         text = json_mod.dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": json_mod.dumps(payload)}]}})
         return R(200, text="event: message\ndata: " + text)
 import json as json_mod
@@ -174,8 +184,24 @@ composio_post.save_key("ck_testkeyvalue123456")
 calls.clear()
 composio_post.httpx = Connect()
 check("a Connect key sees the Instagram login", composio_post.connections("instagram")[0]["id"], "instagram_demo")
-rid, url = composio_post.post_instagram({"composio_account": "instagram_demo", "user_id": "17841"}, jd / "clip01.mp4", "Hi")
-check("a Connect key publishes through Composio Connect", (rid, url), ("media9", "https://www.instagram.com/reel/z/"))
+with ctx.as_user(boss.id):
+    clip_path, jid = jd / "clip01.mp4", "job-12345678"
+    with patch.object(config, "PUBLIC_URL", "https://127.0.0.1:8766"):
+        calls.clear()
+        blocked = dict(p, status="posting", tries=0, error=None)
+        posting._post(blocked)
+        check("localhost Connect posting explains the setup requirement without retrying or calling Composio",
+              (blocked["status"], "public HTTPS" in (blocked["error"] or ""), len(calls)), ("failed", True, 0))
+    rid, url = composio_post.post_instagram({"composio_account": "instagram_demo", "user_id": "17841"}, clip_path, "Hi", jid)
+    check("a Connect key publishes a Reel through the supported URL input",
+          (rid, url), ("media9", "https://www.instagram.com/reel/z/"))
+    rid, url = composio_post.post_facebook({"composio_account": "facebook_demo", "page_id": "111"}, clip_path, "Hi", "", jid)
+    check("Facebook Connect uses its supported direct URL input",
+          (rid, url), ("vid9", "https://www.facebook.com/111/videos/vid9"))
+    args = calls[0][2]["params"]["arguments"]["tools"][0]["arguments"]
+    link = urlsplit(args["video_url"])
+    check("a logged-out media fetch can read the exact clip using the signed URL",
+          TestClient(server.app, base_url=BASE).get(link.path).content, clip_path.read_bytes())
 sent = next(c for c in calls if c[0] == "MCP")
 check("the Connect key is sent as the consumer key", sent[3].get("x-consumer-api-key") == "ck_testkeyvalue123456" and "x-api-key" not in sent[3], True)
 

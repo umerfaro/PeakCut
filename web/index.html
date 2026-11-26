@@ -5002,6 +5002,8 @@ const schFind = id => (schState().data?.posts || []).find(p => p.id === id);
 const schLocalCopy = /^(localhost|127\.0\.0\.1|\[::1\])$|\.(local|test|localhost)$/.test(location.hostname);
 function schWhy(p) {
   const e = (p.error || "").toLowerCase(), pl = APPS_BAR[p.platform]?.[0] || "The platform";
+  if (/upload_local_file|composio connect needs a public https/.test(e))
+    return ["Composio can't fetch the clip", "Use a public HTTPS PeakCut address with your Connect key, or connect the accounts in a Composio project and use its project API key for local uploads.", "retry"];
   if (/token|oauth|expired|unauthori|permission|401|403|reconnect|session/.test(e))
     return [`${pl} needs you to sign in again`, `PeakCut lost access to ${p.account_name}. This happens when the password changes or the access runs out. Reconnect the account, then retry.`, "reconnect"];
   if (/uploadlimitexceeded|daily upload limit/.test(e))
@@ -6083,7 +6085,7 @@ async function drawSettings() {
       const keyPanel = keyOpen ? `<div class="appsetup">
           <p class="sub">PeakCut posts Instagram Reels and Facebook videos through <a href="https://dashboard.composio.dev" target="_blank" rel="noopener">Composio</a>, using the accounts you already connected there. A Meta developer app is not used.</p>
           <ol><li>In Composio, connect Instagram and Facebook if they are not connected yet.</li>
-            <li>Copy the API key. A Connect key (it starts with ck_) is the one that uses the accounts you already connected.</li>
+            <li>Copy the API key. A Connect key (ck_) uses your existing Connect accounts and needs a public HTTPS PeakCut address. For local uploads, use a project API key and connect the accounts in that project.</li>
             <li>Paste it here, save, then press Connect on Instagram and on Facebook.</li></ol>
           ${comp.from_env ? `<p class="sub">The key is already set in the .env file. Change it there.</p><div class="row"><button class="btn ghost" data-act="appsetup" data-p="">Close</button></div>`
             : `<label class="f">Composio API key<input id="composio_key" type="password" autocomplete="off" spellcheck="false" placeholder="${comp.ready ? "Saved. Paste a new one to replace it" : ""}"></label>

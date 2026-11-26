@@ -7,12 +7,12 @@ the data folder). It is never sent back to the browser.
 A project key (ak_...) uses Composio's API directly. A Connect key (ck_...), the one from Composio's own
 Connect page, uses the same connection the person already made there.
 """
-import base64
 import hashlib
 import json
 import re
-import secrets
+from ipaddress import ip_address
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -20,7 +20,6 @@ from . import config
 
 API = "https://backend.composio.dev/api/v3.1"
 MCP = "https://connect.composio.dev/mcp"
-CHUNK = 1_000_000  # raw bytes per piece sent to Composio; the request stays small enough to be accepted
 
 
 def _saved_file() -> Path:
@@ -146,53 +145,7 @@ def _mcp(name: str, arguments: dict, timeout: int = 120) -> dict:
     return body if isinstance(body, dict) else {}
 
 
-def _workbench(code: str, timeout: int = 180) -> str:
-    body = _mcp("COMPOSIO_REMOTE_WORKBENCH", {
-        "code_to_execute": code, "thought": "PeakCut is sending a clip.", "current_step": "POSTING"}, timeout=timeout)
-    data = body.get("data") if isinstance(body.get("data"), dict) else {}
-    return str(data.get("stdout") or "")
-
-
-def _mark(stdout: str) -> dict:
-    """The one line of JSON the workbench is asked to print. Anything else it prints is ignored."""
-    found = {}
-    for line in stdout.splitlines():
-        line = line.strip()
-        if line.startswith("PEAKCUT "):
-            try:
-                got = json.loads(line[len("PEAKCUT "):])
-            except ValueError:
-                continue
-            if isinstance(got, dict):
-                found = got
-    if found.get("error"):
-        raise RuntimeError(_hide(str(found["error"]))[:300])
-    return found
-
-
-def _stage(path: Path) -> str:
-    """Copy the clip into Composio's workspace, in pieces, and return the path there."""
-    remote = f"/home/user/peakcut-{secrets.token_hex(4)}.mp4"
-    raw = path.read_bytes()
-    pieces = [raw[i:i + CHUNK] for i in range(0, len(raw), CHUNK)] or [b""]
-    sent = 0
-    for piece in pieces:
-        sent += len(piece)
-        code = (
-            "import base64\nfrom pathlib import Path\n"
-            f"p = Path({json.dumps(remote)})\n"
-            f"p.parent.mkdir(parents=True, exist_ok=True)\n"
-            f"with p.open({json.dumps('ab' if sent != len(piece) else 'wb')}) as handle:\n"
-            f"    handle.write(base64.b64decode({json.dumps(base64.b64encode(piece).decode())}))\n"
-            "print(p.stat().st_size)\n")
-        stdout = _workbench(code)
-        numbers = [int(line) for line in stdout.splitlines() if line.strip().isdigit()]
-        if not numbers or numbers[-1] != sent:
-            raise RuntimeError("Composio did not take the whole video file.")
-    return remote
-
-
-def execute(slug: str, arguments: dict, account_id: str, timeout: int = 120) -> dict:
+def execute(slug: str, arguments: dict, account_id: str, timeout: int = 120, *, user_id: str = "") -> dict:
     if _connect_key():
         body = _mcp("COMPOSIO_MULTI_EXECUTE_TOOL", {
             "tools": [{"tool_slug": slug, "arguments": arguments, "account": account_id}],
@@ -206,8 +159,12 @@ def execute(slug: str, arguments: dict, account_id: str, timeout: int = 120) -> 
             raise RuntimeError(_hide(str(first["error"]))[:300])
         response = first.get("response") if isinstance(first.get("response"), dict) else first
         return _tool_data(response)
+    if not user_id:
+        user_id = str(_request("GET", f"/connected_accounts/{account_id}").get("user_id") or "")
+    if not user_id:
+        raise RuntimeError("Composio did not provide the connected account's user ID. Refresh the connection in PeakCut.")
     body = _request("POST", f"/tools/execute/{slug}", timeout=timeout, body={
-        "connected_account_id": account_id, "arguments": arguments})
+        "connected_account_id": account_id, "user_id": user_id, "arguments": arguments})
     return _tool_data(body)
 
 
@@ -246,18 +203,18 @@ def connections(platform: str) -> list:
     return found
 
 
-def instagram_profile(account_id: str) -> dict:
-    return execute("INSTAGRAM_GET_USER_INFO", {"ig_user_id": "me"}, account_id)
+def instagram_profile(account_id: str, *, user_id: str = "") -> dict:
+    return execute("INSTAGRAM_GET_USER_INFO", {"ig_user_id": "me"}, account_id, user_id=user_id)
 
 
-def facebook_pages(account_id: str) -> list:
+def facebook_pages(account_id: str, *, user_id: str = "") -> list:
     pages, seen = [], set()
     after = None
     for _ in range(10):
         args = {"user_id": "me", "limit": 25, "fields": "id,name,tasks,link"}
         if after:
             args["after"] = after
-        got = execute("FACEBOOK_LIST_MANAGED_PAGES", args, account_id)
+        got = execute("FACEBOOK_LIST_MANAGED_PAGES", args, account_id, user_id=user_id)
         rows = got.get("data") if isinstance(got.get("data"), list) else []
         pages.extend(rows)
         after = ((got.get("paging") or {}).get("cursors") or {}).get("after")
@@ -289,66 +246,47 @@ def upload(path: Path, toolkit: str, tool: str) -> dict:
     return {"name": path.name, "mimetype": "video/mp4", "s3key": s3key}
 
 
-def _publish_instagram(acc: dict, remote: str, caption: str) -> tuple:
-    """Upload the staged clip and publish the Reel. Two steps, because a video can take a minute to process."""
-    account, user, caption = acc["composio_account"], acc["user_id"], caption[:2200]
-    code = f"""
-import json
-from pathlib import Path
-result, error = upload_local_file({json.dumps(remote)})
-s3 = result.get("s3key") if isinstance(result, dict) else ""
-made, err = (None, error)
-if not error:
-    made, err = run_composio_tool("INSTAGRAM_POST_IG_USER_MEDIA", {{
-        "ig_user_id": {json.dumps(user)}, "caption": {json.dumps(caption)},
-        "video_file": {{"name": "clip.mp4", "mimetype": "video/mp4", "s3key": s3}},
-        "media_type": "REELS", "share_to_feed": True}}, account={json.dumps(account)})
-cid = ""
-if isinstance(made, dict):
-    data = made.get("data") if isinstance(made.get("data"), dict) else {{}}
-    cid = str(data.get("id") or made.get("id") or "")
-print("PEAKCUT " + json.dumps({{"creation_id": cid, "error": "" if cid else str(err or "Instagram did not accept the video.")[:300]}}))
-"""
-    creation = str(_mark(_workbench(code))["creation_id"])
-    code = f"""
-import json
-made, err = run_composio_tool("INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH", {{
-    "ig_user_id": {json.dumps(user)}, "creation_id": {json.dumps(creation)}, "max_wait_seconds": 140}},
-    account={json.dumps(account)})
-mid, link = "", ""
-if isinstance(made, dict):
-    data = made.get("data") if isinstance(made.get("data"), dict) else {{}}
-    mid = str(data.get("id") or made.get("id") or "")
-if mid:
-    info, info_err = run_composio_tool("INSTAGRAM_GET_IG_MEDIA",
-        {{"ig_media_id": mid, "fields": "id,permalink"}}, account={json.dumps(account)})
-    if isinstance(info, dict):
-        data = info.get("data") if isinstance(info.get("data"), dict) else info
-        link = str(data.get("permalink") or "")
-print("PEAKCUT " + json.dumps({{"media_id": mid, "permalink": link, "error": "" if mid else str(err or "Instagram did not publish the video.")[:300]}}))
-"""
-    done = _mark(_workbench(code, timeout=200))
-    return str(done.get("media_id") or creation), str(done.get("permalink") or "")
+class ConnectVideoSourceError(RuntimeError):
+    """The server needs a reachable URL before a Connect account can publish video."""
 
 
-def post_instagram(acc: dict, path: Path, caption: str) -> tuple:
+def _video_source(path, job_id, toolkit, tool, file_field, url_field):
+    if not _connect_key():
+        return {file_field: upload(path, toolkit, tool)}
+
+    from .accounts import clip_link
+
+    address = urlsplit(config.PUBLIC_URL)
+    host = (address.hostname or "").rstrip(".").lower()
+    try:
+        public_host = ip_address(host).is_global
+    except ValueError:
+        public_host = "." in host and not host.endswith((".local", ".localhost", ".test", ".internal"))
+    if not job_id or address.scheme != "https" or not public_host:
+        raise ConnectVideoSourceError(
+            "Composio Connect needs a public HTTPS PeakCut address to fetch the clip. "
+            "For local uploads, use a Composio project API key and connect your Instagram and Facebook accounts in that project."
+        )
+    return {url_field: clip_link(job_id, path.name)}
+
+
+def post_instagram(acc: dict, path: Path, caption: str, job_id: str = "") -> tuple:
     """A Reel on the connected Instagram account. Returns (media id, link)."""
-    if _connect_key():
-        return _publish_instagram(acc, _stage(path), caption)
     account_id = acc["composio_account"]
-    uploaded = upload(path, "instagram", "INSTAGRAM_POST_IG_USER_MEDIA")
+    user_id = acc.get("composio_user_id") or ""
+    source = _video_source(path, job_id, "instagram", "INSTAGRAM_POST_IG_USER_MEDIA", "video_file", "video_url")
     created = execute("INSTAGRAM_POST_IG_USER_MEDIA", {
-        "ig_user_id": acc["user_id"], "caption": caption[:2200], "video_file": uploaded,
-        "media_type": "REELS", "share_to_feed": True}, account_id)
+        "ig_user_id": acc["user_id"], "caption": caption[:2200], **source,
+        "media_type": "REELS", "share_to_feed": True}, account_id, user_id=user_id)
     creation = _pick_id(created)
     if not creation:
         raise RuntimeError("Instagram did not accept the video.")
     published = execute("INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH", {
-        "ig_user_id": acc["user_id"], "creation_id": creation, "max_wait_seconds": 300}, account_id, timeout=360)
+        "ig_user_id": acc["user_id"], "creation_id": creation, "max_wait_seconds": 300}, account_id, timeout=360, user_id=user_id)
     media_id = _pick_id(published) or creation
     link = ""
     try:
-        info = execute("INSTAGRAM_GET_IG_MEDIA", {"ig_media_id": media_id, "fields": "id,permalink"}, account_id)
+        info = execute("INSTAGRAM_GET_IG_MEDIA", {"ig_media_id": media_id, "fields": "id,permalink"}, account_id, user_id=user_id)
         link = str(info.get("permalink") or "")
     except Exception:  # noqa: BLE001 - the post is up; the link is only for the clip card
         pass
@@ -357,56 +295,21 @@ def post_instagram(acc: dict, path: Path, caption: str) -> tuple:
 
 def instagram_views(acc: dict, media_id: str):
     try:
-        info = execute("INSTAGRAM_GET_IG_MEDIA", {"ig_media_id": media_id, "fields": "id,view_count"}, acc["composio_account"])
+        info = execute("INSTAGRAM_GET_IG_MEDIA", {"ig_media_id": media_id, "fields": "id,view_count"},
+                       acc["composio_account"], user_id=acc.get("composio_user_id") or "")
         return int(info["view_count"]) if info.get("view_count") is not None else None
     except Exception:  # noqa: BLE001
         return None
 
 
-def _publish_facebook(acc: dict, remote: str, title: str, description: str) -> tuple:
-    account, page = acc["composio_account"], acc["page_id"]
-    code = f"""
-import json
-result, error = upload_local_file({json.dumps(remote)})
-s3 = result.get("s3key") if isinstance(result, dict) else ""
-made, err = (None, error)
-if not error:
-    made, err = run_composio_tool("FACEBOOK_CREATE_VIDEO_POST", {{
-        "page_id": {json.dumps(page)}, "title": {json.dumps((title or "Clip")[:250])},
-        "description": {json.dumps(description[:5000])}, "published": True,
-        "video": {{"name": "clip.mp4", "mimetype": "video/mp4", "s3key": s3}}}}, account={json.dumps(account)})
-mid, link = "", ""
-if isinstance(made, dict):
-    data = made.get("data") if isinstance(made.get("data"), dict) else {{}}
-    mid = str(data.get("id") or made.get("id") or "")
-    link = str(data.get("permalink_url") or made.get("permalink_url") or "")
-if mid and not link:
-    posts, _ = run_composio_tool("FACEBOOK_GET_PAGE_POSTS",
-        {{"page_id": {json.dumps(page)}, "limit": 5, "fields": "id,permalink_url"}}, account={json.dumps(account)})
-    rows = []
-    if isinstance(posts, dict):
-        data = posts.get("data") if isinstance(posts.get("data"), dict) else {{}}
-        rows = data.get("data") if isinstance(data.get("data"), list) else []
-    match = next((row for row in rows if mid in str(row.get("id", ""))), None)
-    link = str((match or (rows[0] if rows else {{}})).get("permalink_url") or "")
-print("PEAKCUT " + json.dumps({{"media_id": mid, "permalink": link, "error": "" if mid else str(err or "Facebook did not publish the video.")[:300]}}))
-"""
-    done = _mark(_workbench(code, timeout=200))
-    link = str(done.get("permalink") or "")
-    if link.startswith("/"):
-        link = "https://www.facebook.com" + link
-    return str(done["media_id"]), link
-
-
-def post_facebook(acc: dict, path: Path, title: str, description: str) -> tuple:
+def post_facebook(acc: dict, path: Path, title: str, description: str, job_id: str = "") -> tuple:
     """A video on a Facebook Page. Returns (post id, link)."""
-    if _connect_key():
-        return _publish_facebook(acc, _stage(path), title, description)
     account_id = acc["composio_account"]
-    uploaded = upload(path, "facebook", "FACEBOOK_CREATE_VIDEO_POST")
+    user_id = acc.get("composio_user_id") or ""
+    source = _video_source(path, job_id, "facebook", "FACEBOOK_CREATE_VIDEO_POST", "video", "file_url")
     made = execute("FACEBOOK_CREATE_VIDEO_POST", {
         "page_id": acc["page_id"], "title": (title or "Clip")[:250], "description": description[:5000],
-        "video": uploaded, "published": True}, account_id, timeout=360)
+        **source, "published": True}, account_id, timeout=360, user_id=user_id)
     if made.get("unsuccessful"):
         raise RuntimeError("Facebook did not publish the video.")
     remote = _pick_id(made)
@@ -416,7 +319,7 @@ def post_facebook(acc: dict, path: Path, title: str, description: str) -> tuple:
     if not link:
         try:
             posts = execute("FACEBOOK_GET_PAGE_POSTS", {
-                "page_id": acc["page_id"], "limit": 5, "fields": "id,permalink_url"}, account_id)
+                "page_id": acc["page_id"], "limit": 5, "fields": "id,permalink_url"}, account_id, user_id=user_id)
             rows = posts.get("data") if isinstance(posts.get("data"), list) else []
             match = next((row for row in rows if remote in str(row.get("id", ""))), None)
             link = str((match or (rows[0] if rows else {})).get("permalink_url") or "")

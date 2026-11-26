@@ -802,7 +802,7 @@ def composio_import(platform: str) -> list:
     names = []
     if platform == "instagram":
         for conn in linked:
-            me = composio_post.instagram_profile(conn["id"])
+            me = composio_post.instagram_profile(conn["id"], user_id=conn.get("user_id") or "")
             uid, username = str(me.get("id") or ""), str(me.get("username") or "")
             if not uid or not username:
                 raise RuntimeError("Composio did not return the Instagram account.")
@@ -811,18 +811,18 @@ def composio_import(platform: str) -> list:
                 raise ValueError(f"@{username} is a personal Instagram account. Switch it to Creator or Business, then connect again.")
             _put({"id": f"ig_{uid}", "platform": "instagram", "name": "@" + username, "added": time.time(),
                   "user_id": uid, "via": "composio", "composio_account": conn["id"],
-                  "detail": "Posted through Composio"})
+                  "composio_user_id": conn.get("user_id") or "", "detail": "Posted through Composio"})
             names.append("@" + username)
         return names
     for conn in linked:
-        pages = [p for p in composio_post.facebook_pages(conn["id"]) if _page_can_post(p)]
+        pages = [p for p in composio_post.facebook_pages(conn["id"], user_id=conn.get("user_id") or "") if _page_can_post(p)]
         for page in pages:
             pid, label = str(page.get("id") or ""), str(page.get("name") or "Facebook Page")
             if not pid:
                 continue
             _put({"id": f"fb_{pid}", "platform": "facebook", "name": label, "added": time.time(),
                   "page_id": pid, "via": "composio", "composio_account": conn["id"],
-                  "detail": "Posted through Composio"})
+                  "composio_user_id": conn.get("user_id") or "", "detail": "Posted through Composio"})
             names.append(label)
     if not names:
         raise ValueError("That Facebook login cannot post to any Page. In Composio, reconnect Facebook and allow the Page.")
