@@ -1284,6 +1284,18 @@ def music_catalog():
     return music.catalog()
 
 
+@app.post("/api/music/refresh")
+def music_catalog_refresh():
+    from . import music_library
+
+    _throttle("musiccatalog:" + ctx.uid(), 5, 60)
+    try:
+        music_library.refresh_keynata()
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return music.catalog()
+
+
 @app.get("/api/music/{track}/audio")
 def music_audio(track: str):
     if not music.has_track(track):

@@ -6124,9 +6124,13 @@ async function openMusic(place) {
     <header class="row"><h2>Background music</h2><span class="grow"></span><button type="button" class="btn icon ghost" data-music-action="close" aria-label="Close">${ic("x")}</button></header>
     <div class="music-body">
       <label class="f">Search tracks<input id="music-search" type="search" placeholder="Title, mood, artist, or genre" autocomplete="off"></label>
-      <label class="f">Genre<select id="music-genre"><option value="">All genres</option>
-        ${[...new Set(tracks.map(t => t.genre))].sort().map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join("")}</select></label>
-      <div id="music-count" class="sub" aria-live="polite"></div>
+      <div class="two">
+        <label class="f">Genre<select id="music-genre">${musicOptions(tracks, "genre", "All genres")}</select></label>
+        <label class="f">Source<select id="music-source">${musicOptions(tracks, "artist", "All sources")}</select></label>
+      </div>
+      <div class="row"><div id="music-count" class="sub" aria-live="polite"></div><span class="grow"></span>
+        <button type="button" class="btn sm ghost" data-music-action="refresh">Refresh catalog</button>
+      </div>
       <div id="music-tracks" class="music-tracks" role="group" aria-label="Music tracks"></div>
       <button type="button" class="btn sm ghost" data-music-action="more" hidden>Show more tracks</button>
       <audio id="music-track-audio" controls preload="none" hidden></audio>
@@ -6148,15 +6152,20 @@ async function openMusic(place) {
   $("#music-search").focus();
 }
 
+function musicOptions(tracks, field, all) {
+  return `<option value="">${all}</option>${[...new Set(tracks.map(t => t[field]))].sort()
+    .map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join("")}`;
+}
+
 function paintMusicTracks() {
   const query = $("#music-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const genre = $("#music-genre").value;
-  const rows = musicCatalog.filter(t => (!genre || t.genre === genre)
+  const genre = $("#music-genre").value, source = $("#music-source").value;
+  const rows = musicCatalog.filter(t => (!genre || t.genre === genre) && (!source || t.artist === source)
     && query.every(term => `${t.title} ${t.mood} ${t.genre} ${t.artist}`.toLowerCase().includes(term)));
   const visible = rows.slice(0, musicEdit.shown);
   put($("#music-tracks"), visible.map(t => `<div class="music-track">
     <button type="button" class="music-select" data-music-action="choose" data-track="${esc(t.id)}" aria-pressed="${musicEdit.mix.track === t.id}">
-      <strong>${esc(t.title)}</strong><span class="sub">${esc(t.genre)} · ${esc(t.mood)} · ${t.bpm} BPM · ${fmt(t.seconds)}</span>
+      <strong>${esc(t.title)}</strong><span class="sub">${esc(t.genre)} · ${esc(t.mood)} · ${t.bpm} BPM · ${t.estimated_length ? "~" : ""}${fmt(t.seconds)}</span>
     </button><button type="button" class="btn sm ghost" data-music-action="listen" data-track="${esc(t.id)}" aria-label="Preview ${esc(t.title)}">Play</button>
   </div>`).join("") || `<p class="sub">No tracks match your search.</p>`);
   $("#music-count").textContent = `${visible.length} of ${rows.length} tracks · CC0`;
@@ -6195,7 +6204,7 @@ musicDialog.addEventListener("close", () => {
 musicDialog.addEventListener("input", e => {
   const state = musicEdit, input = e.target;
   if (!state) return;
-  if (input.id === "music-search" || input.id === "music-genre") {
+  if (["music-search", "music-genre", "music-source"].includes(input.id)) {
     state.shown = 24;
     $("#music-tracks").scrollTop = 0;
     return paintMusicTracks();
@@ -6234,6 +6243,19 @@ musicDialog.addEventListener("click", async e => {
   }
   button.disabled = true;
   try {
+    if (action === "refresh") {
+      feedback.textContent = "Refreshing Keynata Commons…";
+      musicCatalog = await send("/api/music/refresh", {});
+      if (musicEdit !== state) return;
+      for (const [id, field, label] of [["music-genre", "genre", "All genres"], ["music-source", "artist", "All sources"]]) {
+        const select = document.getElementById(id), selected = select.value;
+        select.innerHTML = musicOptions(musicCatalog, field, label);
+        select.value = [...select.options].some(o => o.value === selected) ? selected : "";
+      }
+      paintMusicTracks();
+      feedback.textContent = "Catalog refreshed.";
+      return;
+    }
     const path = state.clip ? `/api/jobs/${encodeURIComponent(state.job.id)}/clips/${encodeURIComponent(state.clip.id)}/music` : "";
     const body = {music: state.mix, version: state.version};
     if (action === "mix") {

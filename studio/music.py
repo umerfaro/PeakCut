@@ -35,7 +35,7 @@ def catalog():
 
 
 def has_track(track):
-    return track in TRACKS or track in music_library.TRACKS
+    return track in TRACKS or music_library.has_track(track)
 
 
 def clean(value):
@@ -66,7 +66,7 @@ def active(settings):
 
 
 def track_file(track):
-    if track in music_library.TRACKS:
+    if music_library.has_track(track):
         return music_library.file(track)
     if track not in TRACKS:
         raise ValueError("That music track is unavailable.")

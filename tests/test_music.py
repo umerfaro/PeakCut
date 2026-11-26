@@ -1,4 +1,5 @@
 """Music defaults and changes to old exports, using real FFmpeg audio and video streams."""
+import json
 import os
 import sys
 import tempfile
@@ -35,8 +36,13 @@ with tempfile.TemporaryDirectory(prefix="pc-test-music-") as tmp:
     check("unknown track IDs are refused", client.get("/api/music/unknown/audio").status_code == 404)
     library = [t for t in catalog if t["artist"] == "Kaino"]
     check("the full creator catalog includes its genre and license information",
-          len(catalog) == 500 and len(library) == 492 and len({t["genre"] for t in library}) == 57
+          len(library) == 492 and len({t["genre"] for t in library}) == 57
           and all(t["source"].startswith("https://kaino.dev/library/music") for t in library))
+    keynata = [t for t in catalog if t["artist"] == "Keynata Commons"]
+    check("Keynata adds a second 203-track CC0 catalog with karaoke backing",
+          len(catalog) == 703 and len(keynata) == 203
+          and all(t["license"] == "CC0 1.0" for t in keynata)
+          and any(t["genre"] == "Karaoke" and "Backing" in t["title"] for t in keynata))
     remote_id = library[0]["id"]
     slug = music_library.TRACKS[remote_id]["slug"]
     source_mp3 = Path(tmp) / "test.mp3"
@@ -67,6 +73,40 @@ with tempfile.TemporaryDirectory(prefix="pc-test-music-") as tmp:
               client.get(f"/api/music/{library[1]['id']}/audio").status_code == 502)
 
     neon = music.clean({"track": "neon-run", "volume": 18, "original": 90, "duck": True})
+    fresh = {
+        "license": {"generated_content": "CC0-1.0", "url": music_library.LICENSE},
+        "tracks": [
+            {"track_id": "rock_standard_987654", "category": "rock_standard", "files": ["rock_standard_987654.mp3"],
+             "bpm": 110, "duration_seconds": 26.6, "screening_passed": True},
+            {"track_id": "../bad", "category": "rock_standard", "files": ["../bad.mp3"],
+             "bpm": 110, "duration_seconds": 26.6, "screening_passed": True},
+        ],
+    }
+
+    def keynata_index(request):
+        assert str(request.url) == music_library.KEYNATA + "release/index.json"
+        return httpx.Response(200, json=fresh)
+
+    with httpx.Client(transport=httpx.MockTransport(keynata_index)) as upstream:
+        with patch.object(music_library.httpx, "stream", side_effect=upstream.stream):
+            refreshed = client.post("/api/music/refresh", headers=origin)
+            check("the public JSON API refresh adds eligible tracks and ignores invalid file paths",
+                  refreshed.is_success and len(refreshed.json()) == 704 and len(music_library._read_keynata()) == 204)
+            fresh["license"]["generated_content"] = "CC-BY-NC-4.0"
+            denied = client.post("/api/music/refresh", headers=origin)
+            check("non-CC0 catalog data leaves the previously available library intact",
+                  denied.status_code == 502 and len(client.get("/api/music").json()) == 704)
+
+    def keynata_mp3(request):
+        assert str(request.url) == music_library.KEYNATA + "release/tracks/rock_standard_987654/rock_standard_987654.mp3"
+        return httpx.Response(200, headers={"Content-Type": "audio/mp3"}, content=source_mp3.read_bytes())
+
+    keynata_id = "keynata-rock_standard_987654"
+    upstream = httpx.Client(transport=httpx.MockTransport(keynata_mp3))
+    with patch.object(music_library.httpx, "Client", return_value=upstream):
+        response = client.get(f"/api/music/{keynata_id}/audio", headers={"Range": "bytes=0-63"})
+    check("Keynata MP3s are cached and served with range support", response.status_code == 206
+          and music.track_file(keynata_id).read_bytes() == source_mp3.read_bytes())
     with ctx.as_user(owner.id):
         style = templates.add({"name": "Gaming music", "look": {"music": neon}})
         _, look = templates.pick(style["id"])
@@ -109,7 +149,7 @@ with tempfile.TemporaryDirectory(prefix="pc-test-music-") as tmp:
         clean = clean_file.read_bytes()
         check("existing clips can add music with the exact same encoded video and no source file",
               mixed[0] == original[0] and mixed[1] != original[1] and not job.get("source_path"))
-        update({"track": remote_id, "volume": 38, "duck": False}, 2)
+        update({"track": keynata_id, "volume": 38, "duck": False}, 2)
         check("replacing music keeps the original audio and preserves posting history",
               clean_file.read_bytes() == clean and streams(video) != "\n".join(mixed) + "\n"
               and clip["posts"]["existing"]["status"] == "posted")
