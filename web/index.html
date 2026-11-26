@@ -691,6 +691,11 @@ a.lnk{color:var(--brand-ink);text-decoration:none;font-weight:600}
 dialog{border:1px solid var(--line);background:#fff;color:var(--text);border-radius:var(--r-lg);padding:0;max-width:calc(100vw - 32px)}
 #musicdlg{width:min(560px,calc(100vw - 32px));max-height:calc(100dvh - 40px)}
 .music-panel{display:flex;flex-direction:column;max-height:calc(100dvh - 42px)}
+.music-tabs{padding:10px 20px;border-bottom:1px solid var(--line);flex-shrink:0}
+.music-tabs .seg{display:flex;flex-wrap:wrap;gap:4px}
+.music-view{display:flex;flex-direction:column;min-height:0}
+.music-view[hidden]{display:none}
+
 .music-panel header,.music-panel footer{padding:14px 20px;flex-shrink:0}
 .music-panel header{border-bottom:1px solid var(--line)}
 .music-panel header h2{margin:0;font-size:1.18rem}
@@ -5653,8 +5658,11 @@ function tplCtl() {
   // a heading preset as the heading itself, big enough to read, on a picture of the video
   const hookSample = v => `<span class="hps" style="background-image:url('${tplSrc("blur.jpg")}')"><span style="font-family:'pcf ${esc(v.font)}',sans-serif;color:#${v.color};${v.bg ? `background:#${v.bgc};` : ""}${v.outline ? `-webkit-text-stroke:${v.outline / 3}px #000;paint-order:stroke fill;` : ""}">He did it</span></span>`;
   if (E.tab === "music") {
-    box.innerHTML = `<div class="tpe-sec"><h4>Background music</h4><p class="sub">${esc(musicSummary(E.look.music))}</p>
-      <button type="button" class="btn" data-act="musicstyle">${ic("plus")}${E.look.music?.track ? "Edit music" : "Add music"}</button></div>`;
+    box.innerHTML = `<div class="tpe-sec"><h4>Background music</h4>
+      ${toggle("auto_music", "Let AI choose music for each clip", E.look.auto_music)}
+      ${E.look.auto_music ? '<p class="sub">PeakCut chooses a royalty-free track and volume for each clip. You can change the mix after it renders.</p>' :
+      `<p class="sub">${esc(musicSummary(E.look.music))}</p>
+        <button type="button" class="btn" data-act="musicstyle">${ic("plus")}${E.look.music?.track ? "Edit music" : "Add music"}</button>`}</div>`;
     return;
   }
   if (E.tab === "captions") {
@@ -6095,11 +6103,142 @@ function musicSummary(mix) {
   return track ? `${track.title} · ${mix.volume}%` : mix?.track ? `Background track · ${mix.volume}%` : "No music";
 }
 
+let igAudioState;
+
+function loadInstagramAudio(job, clip) {
+  const panel = $("#music-instagram");
+  if (!panel || igAudioState) return;
+  const targets = S.accounts.filter(a => a.reels_audio);
+  const existing = clip.reels_audio;
+  const state = {job, clip, choice: existing, request:0};
+  igAudioState = state;
+  const path = `/api/jobs/${encodeURIComponent(job.id)}/clips/${encodeURIComponent(clip.id)}`;
+  panel.innerHTML = `<div class="music-body">
+      <p class="sub">Trending music and meme sounds from Instagram. Instagram attaches a selected sound when you publish the Reel to that account.</p>
+      ${targets.length ? `
+        <label class="f">Instagram account<select id="ig-audio-account">${targets.map(a =>
+          `<option value="${esc(a.id)}"${a.id === existing?.account ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label>
+        <form id="ig-audio-search" class="music-body" style="padding:0">
+          <label class="f">Browse<select id="ig-audio-kind"><option value="music">Music</option><option value="original_sound">Original sounds and memes</option></select></label>
+          <label class="f">Search<input id="ig-audio-query" placeholder="Leave empty for trending audio" maxlength="100"></label>
+          <div class="row"><button type="submit" class="btn sm">Search Instagram</button></div>
+        </form>
+        <div class="music-tracks" id="ig-audio-results" aria-label="Instagram audio"></div>
+        <audio id="ig-audio-preview" controls preload="none" hidden></audio>
+        <div class="two music-levels">
+          <label class="f">Track volume <output>${existing?.audio_volume ?? 20}%</output><input type="range" id="ig-music-level" min="1" max="100" value="${existing?.audio_volume ?? 20}"></label>
+          <label class="f">Clip audio <output>${existing?.video_volume ?? 100}%</output><input type="range" id="ig-video-level" min="1" max="100" value="${existing?.video_volume ?? 100}"></label>
+        </div>
+        <p class="sub" id="ig-audio-selection"></p>
+        <div class="row"><button type="button" data-iga="save" class="btn primary" disabled>Save for Instagram</button>
+          ${existing ? '<button type="button" class="btn ghost" data-iga="clear">Remove selection</button>' : ""}</div>
+        `
+        : `<p class="sub">Instagram catalog search in PeakCut requires an eligible Instagram account connected through Facebook Login. For a Composio connection, choose the sound in the Instagram app.</p>
+          ${existing ? '<button type="button" class="btn ghost" data-iga="clear">Remove saved selection</button>' : ""}`}
+      <div class="ce3-line"></div>
+      <p class="sub">To choose music in Instagram, download the clip with its original audio. Upload it as a Reel, then pick a song or saved sound in Instagram.</p>
+      <div class="row">
+        <a class="btn sm" href="${path}/instagram-export">${ic("down")}Download for Instagram</a>
+        <a class="btn sm" href="https://www.instagram.com/reels/" target="_blank" rel="noopener noreferrer">Open Instagram</a>
+      </div>
+      <div id="ig-audio-message" class="sub" role="status"></div>
+    </div>`;
+  if (targets.length) {
+    drawInstagramAudioChoice();
+    searchInstagramAudio();
+  }
+}
+
+function drawInstagramAudioChoice() {
+  const choice = igAudioState.choice, account = $("#ig-audio-account").value;
+  const active = choice?.account === account;
+  $("#ig-audio-selection").textContent = active ? choice.title + (choice.artist ? " · " + choice.artist : "") : "Choose a track to attach.";
+  musicDialog.querySelector('[data-iga="save"]').disabled = !active;
+  musicDialog.querySelectorAll("[data-ig-track]").forEach(b =>
+    b.setAttribute("aria-pressed", String(active && b.dataset.igTrack === choice.audio_id)));
+}
+
+async function searchInstagramAudio() {
+  const state = igAudioState, stamp = ++state.request;
+  const list = $("#ig-audio-results"), message = $("#ig-audio-message");
+  const account = $("#ig-audio-account").value;
+  const query = new URLSearchParams({account, kind:$("#ig-audio-kind").value, q:$("#ig-audio-query").value});
+  list.textContent = "Loading Instagram audio…";
+  message.textContent = "";
+  try {
+    const tracks = await api("/api/instagram/audio?" + query);
+    if (igAudioState !== state || state.request !== stamp) return;
+    state.tracks = new Map(tracks.map(track => [track.audio_id, {...track, account}]));
+    list.innerHTML = tracks.map(t => `<div class="music-track">
+      <button type="button" class="music-select" data-ig-track="${esc(t.audio_id)}" aria-pressed="false">
+        <strong>${esc(t.title)}</strong><span class="sub">${esc(t.artist)}</span></button>
+      ${t.preview_audio ? `<button type="button" class="btn sm ghost" data-ig-preview="${esc(t.audio_id)}">Play</button>`
+        : t.preview ? `<a class="btn sm ghost" href="${esc(t.preview)}" target="_blank" rel="noopener noreferrer">Listen on Instagram</a>` : ""}
+      </div>`).join("") || `<p class="sub">No matching audio is available for this account.</p>`;
+    drawInstagramAudioChoice();
+  } catch (error) {
+    if (igAudioState !== state || state.request !== stamp) return;
+    list.textContent = "";
+    message.textContent = error.message;
+  }
+}
+
+musicDialog.addEventListener("close", () => { $("#ig-audio-preview")?.pause(); igAudioState = null; });
+musicDialog.addEventListener("submit", event => {
+  if (event.target.id !== "ig-audio-search") return;
+  event.preventDefault();
+  searchInstagramAudio();
+});
+musicDialog.addEventListener("change", event => {
+  if (event.target.id === "ig-audio-account") drawInstagramAudioChoice();
+  if (["ig-audio-account", "ig-audio-kind"].includes(event.target.id)) searchInstagramAudio();
+});
+musicDialog.addEventListener("input", event => {
+  if (event.target.type === "range" && event.target.closest("#music-instagram")) {
+    event.target.previousElementSibling.textContent = event.target.value + "%";
+  }
+});
+musicDialog.addEventListener("click", async event => {
+  const state = igAudioState, track = event.target.closest("[data-ig-track]");
+  const preview = event.target.closest("[data-ig-preview]");
+  if (preview && state?.tracks?.has(preview.dataset.igPreview)) {
+    const audio = $("#ig-audio-preview");
+    audio.src = state.tracks.get(preview.dataset.igPreview).preview_audio;
+    audio.hidden = false;
+    await audio.play().catch(() => {
+      if (igAudioState === state) $("#ig-audio-message").textContent = "This Instagram audio preview could not play.";
+    });
+    return;
+  }
+  if (track && state?.tracks?.has(track.dataset.igTrack)) {
+    state.choice = state.tracks.get(track.dataset.igTrack);
+    drawInstagramAudioChoice();
+    return;
+  }
+  const button = event.target.closest("[data-iga]");
+  if (!button || !state) return;
+  const action = button.dataset.iga;
+  const body = action === "clear" ? {audio_id:null} : {
+    account:state.choice.account, audio_id:state.choice.audio_id,
+    audio_volume:Number($("#ig-music-level").value), video_volume:Number($("#ig-video-level").value)
+  };
+  button.disabled = true;
+  try {
+    await send(`/api/jobs/${encodeURIComponent(state.job.id)}/clips/${encodeURIComponent(state.clip.id)}/instagram-audio`, body, "PUT");
+    if (igAudioState === state) musicDialog.close();
+    await tick();
+    toast(action === "clear" ? "Instagram audio removed" : "Audio saved for the next Instagram post", "ok");
+  } catch (error) {
+    if (igAudioState === state) $("#ig-audio-message").textContent = error.message;
+  } finally { button.disabled = false; }
+});
+
 function clipMusicButton(c) {
   const ready = c.status === "done";
-  const mix = c.music || c.look?.music;
+  const mix = c.music || c.auto_mix || c.look?.music;
   return `<div class="row"><button type="button" class="btn sm" data-act="musicclip"${ready ? "" : " disabled"}>
-    ${ic("plus")}${mix?.track ? "Edit music" : "Add music"}</button><span class="sub">${ready ? esc(musicSummary(mix)) : "Available when the clip is ready"}</span></div>
+    ${ic("plus")}Background music</button><span class="sub">${ready ? esc(musicSummary(mix)) : "Available when the clip is ready"}</span>
+    ${ready && c.reels_audio?.title ? `<span class="sub">Instagram · ${esc(c.reels_audio.title)}</span>` : ""}</div>
     ${c.music_error ? `<p class="err" role="alert">Music update failed. ${esc(c.music_error)}</p>` : ""}`;
 }
 
@@ -6112,12 +6251,17 @@ async function openMusic(place) {
   if (!style && clip?.status !== "done") return;
   const tracks = musicCatalog ||= await api("/api/music");
   if (musicDialog.open || (style ? S.tplEdit !== style : D.jid !== job.id || D.cid !== clip.id || !$("#clipdlg").open)) return;
-  const base = style ? style.look.music : clip.music || clip.look?.music;
+  const base = style ? style.look.music : clip.music || clip.auto_mix || clip.look?.music;
   const state = {style, job, clip, version:clip?.version || 0, mix:{...MUSIC_DEFAULT, ...base}, previewUrl:"", shown:24};
   musicEdit = state;
   $("#clipdlg video")?.pause();
   musicDialog.innerHTML = `<div class="music-panel">
     <header class="row"><h2>Background music</h2><span class="grow"></span><button type="button" class="btn icon ghost" data-music-action="close" aria-label="Close">${ic("x")}</button></header>
+    ${clip ? `<nav class="music-tabs" aria-label="Music libraries"><div class="seg">
+      <button type="button" data-music-library="cc0" aria-pressed="true" aria-controls="music-cc0">Royalty-free</button>
+      <button type="button" data-music-library="instagram" aria-pressed="false" aria-controls="music-instagram">Instagram sounds</button>
+    </div></nav>` : ""}
+    <div class="music-view" id="music-cc0">
     <div class="music-body">
       <label class="f">Search tracks<input id="music-search" type="search" placeholder="Title, mood, artist, or genre" autocomplete="off"></label>
       <div class="two">
@@ -6142,6 +6286,8 @@ async function openMusic(place) {
     </div>
     <footer class="row"><button type="button" class="btn ghost" data-music-action="remove">Remove music</button><span class="grow"></span>
       <button type="button" class="btn primary" data-music-action="apply">${style ? "Use in style" : "Update video"}</button></footer>
+    </div>
+    ${clip ? '<div class="music-view" id="music-instagram" hidden></div>' : ""}
   </div>`;
   paintMusicTracks();
   musicDialog.showModal();
@@ -6215,7 +6361,19 @@ musicDialog.addEventListener("input", e => {
 });
 
 musicDialog.addEventListener("click", async e => {
-  const button = e.target.closest("[data-music-action]"), state = musicEdit;
+  const state = musicEdit, library = e.target.closest("[data-music-library]");
+  if (library && state?.clip) {
+    const instagram = library.dataset.musicLibrary === "instagram";
+    $("#music-track-audio").pause();
+    $("#ig-audio-preview")?.pause();
+    resetMusicPreview(state);
+    $("#music-cc0").hidden = instagram;
+    $("#music-instagram").hidden = !instagram;
+    musicDialog.querySelectorAll("[data-music-library]").forEach(b => b.setAttribute("aria-pressed", String(b === library)));
+    if (instagram) loadInstagramAudio(state.job, state.clip);
+    return;
+  }
+  const button = e.target.closest("[data-music-action]");
   if (!button || !state) return;
   const {musicAction: action, track} = button.dataset;
   const audio = $("#music-track-audio"), feedback = $("#music-feedback");

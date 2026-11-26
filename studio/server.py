@@ -47,7 +47,7 @@ PAGES = {"/": "landing.html", "/login": "auth.html", "/signup": "auth.html", "/r
          "/data-deletion": "legal.html"}
 VIDEO_TYPES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".flv"}
 CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-       "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; "
+       "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' blob: https://*.cdninstagram.com https://*.fbcdn.net; connect-src 'self'; "
        "frame-src https://player.twitch.tv https://www.youtube-nocookie.com https://player.kick.com; "
        "frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com")
 
@@ -1277,6 +1277,65 @@ def _clip_or_404(jid: str, cid: str):
     if not clip:
         raise HTTPException(404, "No such clip")
     return job, clip
+
+
+@app.get("/api/instagram/audio")
+def instagram_audio(account: str, kind: str = "music", q: str = ""):
+    _throttle("igaudio:" + ctx.uid(), 30, 60)
+    try:
+        return accounts.reels_audio_search(accounts.get(account), kind, q[:100])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.put("/api/jobs/{jid}/clips/{cid}/instagram-audio")
+def save_instagram_audio(jid: str, cid: str, body: dict = Body(...)):
+    job, clip = _clip_or_404(jid, cid)
+    if clip.get("status") != "done":
+        raise HTTPException(409, "Wait until this clip finishes rendering.")
+    if body.get("audio_id") is None:
+        clip.pop("reels_audio", None)
+    else:
+        _throttle("igaudio:" + ctx.uid(), 30, 60)
+        try:
+            choice = accounts.reels_audio_choice(accounts.get(body.get("account")), body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        if clip not in job["clips"] or clip.get("status") != "done":
+            raise HTTPException(409, "The clip changed. Open it again before choosing audio.")
+        clip["reels_audio"] = choice
+    jobs.save(job)
+    return jobs.public(job)
+
+
+@app.get("/api/jobs/{jid}/clips/{cid}/instagram-export")
+def instagram_export(jid: str, cid: str):
+    """A download for the native Reel editor, with the clip's original sound."""
+    from starlette.background import BackgroundTask
+
+    job, clip = _clip_or_404(jid, cid)
+    if clip.get("status") != "done" or not clip.get("file"):
+        raise HTTPException(409, "Wait until this clip finishes rendering.")
+    video, clean = jobs.clip_audio_paths(job, clip)
+    if not video.is_file():
+        raise HTTPException(404, "The clip’s video is missing.")
+    filename = account.clip_title_name(clip, cid) + " - Instagram.mp4"
+    if not clean.is_file():
+        return FileResponse(video, filename=filename, media_type="video/mp4")
+    _throttle("igexport:" + ctx.uid(), 12, 60)
+    temp = tempfile.TemporaryDirectory(prefix="pc-instagram-")
+    result = Path(temp.name) / "instagram.mp4"
+    try:
+        music.mix(video, clean, result, music.DEFAULT)
+    except (OSError, RuntimeError, ValueError) as exc:
+        temp.cleanup()
+        raise HTTPException(422, "PeakCut couldn’t prepare the Instagram export.") from exc
+    return FileResponse(result, filename=filename, media_type="video/mp4",
+                        background=BackgroundTask(temp.cleanup), headers={"Cache-Control": "private, no-store"})
 
 
 @app.get("/api/music")

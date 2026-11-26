@@ -503,7 +503,7 @@ def copy_clip(jid, cid, changes: dict):
     n = 2
     while any(c["id"] == f"{cid}-{n}" for c in job["clips"]):
         n += 1
-    new = {k: v for k, v in clip.items() if k not in ("posts", "file", "cover", "made_at", "music_error")}
+    new = {k: v for k, v in clip.items() if k not in ("posts", "file", "cover", "made_at", "music_error", "reels_audio")}
     new.update(id=f"{cid}-{n}", status="queued", error=None, asked=True)   # its version carries on: no second listen, no auto-post
     job["clips"].insert(job["clips"].index(clip) + 1, new)
     save(job)
@@ -812,6 +812,38 @@ def sources_of(creator_id, limit=8) -> list:
     return out[:limit]
 
 
+def _auto_music(job, clip, words):
+    if "music" in clip or not (clip.get("look") or {}).get("auto_music"):
+        return None
+    if "auto_mix" in clip:
+        return clip["auto_mix"]
+
+    def used_tracks():
+        return {mix["track"] for other in job["clips"] if other is not clip
+                for mix in [other.get("music") or other.get("auto_mix") or {}] if mix.get("track")}
+
+    category = clip.get("category")
+    with _lock:
+        candidates = music.auto_candidates(category, f"{job['id']}/{clip['id']}", used_tracks())
+    heard = (clip.get("heard") or {}).get("words") or words
+    speech = " ".join(w["w"] for w in heard if clip["start"] <= w["s"] < clip["end"])
+    usage.set_context(job.get("creator"), job.get("title") or "")
+    picked = brain.choose_background_music(clip, job.get("title"), speech, candidates)
+    with _lock:
+        used = used_tracks()
+        if not picked:
+            dense = len(speech.split()) > 1.5 * (clip["end"] - clip["start"])
+            picked = {"track": music.auto_fallback(category, used), "volume": 8 if dense else 13}
+        elif picked["track"] in used:
+            alternate = next((t["id"] for t in candidates if t["id"] not in used), None)
+            if alternate:
+                picked = {**picked, "track": alternate}
+        settings = music.clean(picked)
+        clip["auto_mix"] = settings
+        save(job)
+    return settings
+
+
 def render_one(job, clip, words):
     d = Path(job["dir"])
     clip["status"] = "rendering"
@@ -919,7 +951,12 @@ def render_one(job, clip, words):
                 extras = {**(extras or {}), "cam": box}
         need, got_h = int((job.get("options") or {}).get("quality") or 1080), int(job.get("height") or 0)
         clip["soft"] = bool(got_h and need > 1080 and got_h < need / 2)     # e.g. a 720p video with a zoomed-in cam
+        automatic = _auto_music(job, clip, words)
+        if automatic:
+            local.update(music=automatic, automatic_music_mix=True)
         out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"], extras=extras)
+        if automatic is None:
+            clip.pop("auto_mix", None)
         clip.update(out, status="done", version=clip.get("version", 0) + 1, error=None)
         post = {k: clip[k] for k in ("title", "description", "hashtags", "hook", "start", "end", "score")}
         (d / "clips" / f"{clip['id']}.json").write_text(json.dumps(post, indent=1), encoding="utf-8")

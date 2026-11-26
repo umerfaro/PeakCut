@@ -16,7 +16,7 @@ import secrets
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 
@@ -32,6 +32,7 @@ SETTING_DEFAULTS = {"discord_webhook": "", "telegram_token": "", "telegram_chat"
 YT_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
 IG = "https://graph.instagram.com"
 FB = "https://graph.facebook.com/v21.0"      # Instagram through Facebook login lives here
+IG_AUDIO = "https://graph.facebook.com/v22.0"
 IG_UPLOAD = "https://rupload.facebook.com/ig-api-upload/v21.0"
 IG_SCOPES = "instagram_business_basic,instagram_business_content_publish"
 TT = "https://open.tiktokapis.com/v2"
@@ -336,7 +337,7 @@ def get(aid):
 
 def list_accounts() -> list:
     return [{"id": a["id"], "platform": a["platform"], "label": PLATFORM_NAMES[a["platform"]], "name": a["name"],
-             "added": a["added"], "detail": a.get("detail", "")} for a in _all()]
+             "added": a["added"], "detail": a.get("detail", ""), "reels_audio": reels_audio_enabled(a)} for a in _all()]
 
 
 def _put(acc):
@@ -666,28 +667,107 @@ def _ig_token(acc) -> str:
     return acc["token"]
 
 
-def instagram_upload(acc, path: Path, caption: str, job_id: str = ""):
+def reels_audio_enabled(acc):
+    return bool(acc and acc.get("platform") == "instagram" and acc.get("api") == "facebook"
+                and not acc.get("via") and acc.get("token"))
+
+
+def _reels_audio_get(acc, endpoint, params=None):
+    if not reels_audio_enabled(acc):
+        raise ValueError("Instagram audio requires a direct Instagram account connected through Facebook Login.")
+    try:
+        response = httpx.get(f"{IG_AUDIO}/{endpoint}", params={"user_id": acc["user_id"], **(params or {})},
+                             headers={"Authorization": f"Bearer {_ig_token(acc)}"}, timeout=12)
+        result = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError("Instagram’s audio catalog is temporarily unavailable.") from exc
+    if not isinstance(result, dict):
+        raise RuntimeError("Instagram’s audio catalog returned an unexpected response.")
+    if response.status_code >= 400 or result.get("error"):
+        error = result.get("error") or {}
+        if response.status_code in (401, 403) or isinstance(error, dict) and error.get("code") in (10, 190, 200):
+            raise ValueError("Instagram denied access to audio. Check the Facebook Login connection and its publishing permissions.")
+        raise RuntimeError("Instagram could not load audio for this account.")
+    return result
+
+
+def _reels_audio_item(row):
+    if not isinstance(row, dict):
+        return None
+    audio_id = str(row.get("audio_id") or "")
+    if not re.fullmatch(r"[0-9]{1,25}", audio_id):
+        return None
+    preview = preview_audio = ""
+    try:
+        raw = str(row.get("on_platform_audio_preview_link") or "")
+        url = urlsplit(raw)
+        if url.scheme == "https" and url.netloc in ("www.instagram.com", "instagram.com"):
+            preview = raw
+        raw_audio = str(row.get("download_url") or "")
+        audio_url = urlsplit(raw_audio)
+        if audio_url.scheme == "https" and audio_url.netloc.endswith((".cdninstagram.com", ".fbcdn.net")):
+            preview_audio = raw_audio
+    except ValueError:
+        pass
+    return {"audio_id": audio_id, "title": str(row.get("title") or "Original audio")[:150],
+            "artist": str(row.get("display_artist") or row.get("ig_username") or "")[:100],
+            "preview": preview, "preview_audio": preview_audio}
+
+
+def reels_audio_search(acc, kind, query):
+    if kind not in ("music", "original_sound"):
+        raise ValueError("Choose music or original sounds.")
+    params = {"audio_type": kind}
+    if query.strip():
+        params["search_query"] = query.strip()[:100]
+    data = _reels_audio_get(acc, "ig_audio", params)
+    rows = data.get("audio")
+    return [item for row in (rows[:40] if isinstance(rows, list) else []) if (item := _reels_audio_item(row))]
+
+
+def reels_audio_choice(acc, selection):
+    audio_id = selection.get("audio_id")
+    if not isinstance(audio_id, str) or not re.fullmatch(r"[0-9]{1,25}", audio_id):
+        raise ValueError("Choose an audio track from Instagram.")
+    levels = {}
+    for key, default in (("audio_volume", 20), ("video_volume", 100)):
+        value = selection.get(key, default)
+        if type(value) is not int or not 1 <= value <= 100:
+            raise ValueError("Instagram audio levels must be between 1 and 100.")
+        levels[key] = value
+    info = _reels_audio_item(_reels_audio_get(acc, audio_id))
+    if not info or info["audio_id"] != audio_id:
+        raise ValueError("Instagram did not confirm that this track is available for your account.")
+    return {"account": acc["id"], "audio_id": audio_id, "title": info["title"], "artist": info["artist"], **levels}
+
+
+def instagram_upload(acc, path: Path, caption: str, job_id: str = "", *, audio=None):
     """A Reel. On a public site Instagram fetches the clip from a one-hour signed link; on a computer it cannot
     reach, the file is sent instead (only possible for some app types)."""
+    if audio and (not reels_audio_enabled(acc) or audio.get("account") != acc["id"]):
+        raise RuntimeError("This Instagram connection can no longer use the selected Reel audio.")
     token = _ig_token(acc)
     auth = {"Authorization": f"Bearer {token}"}
-    uid, IG = acc["user_id"], _ig_host(acc)
+    uid, host = acc["user_id"], _ig_host(acc)
+    data = {"media_type": "REELS", "caption": caption[:2200], "share_to_feed": "true"}
+    upload = IG_UPLOAD
+    if audio:
+        host, upload = IG_AUDIO, IG_UPLOAD.replace("/v21.0", "/v22.0")
+        data["audio_configuration"] = json.dumps({k: audio[k] for k in ("audio_id", "audio_volume", "video_volume")})
     reachable = config.PUBLIC_URL.startswith("https://") and not any(h in config.PUBLIC_URL for h in ("localhost", "127.0.0.1", "[::1]", ".local", ".test"))
     if reachable and job_id:
-        box = _check(httpx.post(f"{IG}/{uid}/media", data={"media_type": "REELS", "video_url": clip_link(job_id, path.name),
-                                                           "caption": caption[:2200], "share_to_feed": "true"},
-                                headers=auth, timeout=60), "Starting the Instagram post").json()
+        data["video_url"] = clip_link(job_id, path.name)
+        box = _check(httpx.post(f"{host}/{uid}/media", data=data, headers=auth, timeout=60), "Starting the Instagram post").json()
     else:
-        box = _check(httpx.post(f"{IG}/{uid}/media", data={"media_type": "REELS", "upload_type": "resumable",
-                                                           "caption": caption[:2200], "share_to_feed": "true"},
-                                headers=auth, timeout=60), "Starting the Instagram upload").json()
+        data["upload_type"] = "resumable"
+        box = _check(httpx.post(f"{host}/{uid}/media", data=data, headers=auth, timeout=60), "Starting the Instagram upload").json()
         with path.open("rb") as f:
-            _check(httpx.post(f"{IG_UPLOAD}/{box['id']}", content=f.read(),
+            _check(httpx.post(f"{upload}/{box['id']}", content=f.read(),
                               headers={"Authorization": f"OAuth {token}", "offset": "0",
                                        "file_size": str(path.stat().st_size)}, timeout=900),
                    "Uploading to Instagram (posting from a computer needs a public https address)")
     for _ in range(90):
-        st = _check(httpx.get(f"{IG}/{box['id']}", params={"fields": "status_code,status"}, headers=auth, timeout=30),
+        st = _check(httpx.get(f"{host}/{box['id']}", params={"fields": "status_code,status"}, headers=auth, timeout=30),
                     "Checking the Instagram upload").json()
         if st.get("status_code") in ("FINISHED", "PUBLISHED"):
             break
@@ -696,11 +776,11 @@ def instagram_upload(acc, path: Path, caption: str, job_id: str = ""):
         time.sleep(6)
     else:
         raise RuntimeError("Instagram took too long to process the video.")
-    pub = _check(httpx.post(f"{IG}/{uid}/media_publish", data={"creation_id": box["id"]}, headers=auth, timeout=60),
+    pub = _check(httpx.post(f"{host}/{uid}/media_publish", data={"creation_id": box["id"]}, headers=auth, timeout=60),
                  "Publishing on Instagram").json()
     link = ""
     try:
-        link = httpx.get(f"{IG}/{pub['id']}", params={"fields": "permalink"}, headers=auth, timeout=30).json().get("permalink", "")
+        link = httpx.get(f"{host}/{pub['id']}", params={"fields": "permalink"}, headers=auth, timeout=30).json().get("permalink", "")
     except Exception:  # noqa: BLE001
         pass
     return pub["id"], link

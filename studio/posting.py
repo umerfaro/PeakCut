@@ -291,7 +291,10 @@ def _post(p):
         creator = creators.get(job["creator"]) or dict(creators.DEFAULTS, name="clips")
         title, cap = clip.get("title") or clip.get("hook") or "Clip", _caption(clip, creator)
         text = f"{title}\n\n{cap}"
-        if acc.get("via") == "composio":
+        reel_audio = clip.get("reels_audio") or {}
+        if acc["platform"] == "instagram" and reel_audio.get("account") == acc["id"]:
+            rid, url = accounts.instagram_upload(acc, path, text, job["id"], audio=reel_audio)
+        elif acc.get("via") == "composio":
             from . import composio_post
             if acc["platform"] == "instagram":
                 rid, url = composio_post.post_instagram(acc, path, text)

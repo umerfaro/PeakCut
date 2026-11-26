@@ -125,6 +125,7 @@ def clean_look(raw) -> dict:
     return {"cap": cap, "hook": hook, "cam": _cam(raw.get("cam")), "cam_style": cam_style, "cam_src": facecam.clean(raw.get("cam_src")),
             "game_src": facecam.clean(raw.get("game_src")),
             "music": music.clean(raw.get("music")),
+            "auto_music": raw.get("auto_music") is True,
             "layout": raw.get("layout") if raw.get("layout") in LAYOUTS else "blur"}
 
 

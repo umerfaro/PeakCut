@@ -5,6 +5,7 @@ import tempfile
 import threading
 import wave
 from pathlib import Path
+from random import Random
 
 import numpy as np
 
@@ -32,6 +33,43 @@ def catalog():
              "seconds": round(32 * 60 / bpm), "artist": "PeakCut Originals", "license": "CC0 1.0",
              "license_url": "https://creativecommons.org/publicdomain/zero/1.0/"}
             for key, (title, mood, genre, bpm, *_arrangement) in TRACKS.items()] + music_library.catalog()
+
+
+_AUTO_MOODS = {
+    "funny": ("funny", "chiptune", "quirky", "playful"),
+    "fail": ("funny", "chiptune", "quirky", "suspense"),
+    "clutch": ("high energy", "rock", "electronic", "epic"),
+    "rage": ("intense", "rock", "hip hop"),
+    "shock": ("tense", "suspense", "cinematic"),
+    "take": ("chill", "lo-fi", "ambient"),
+    "story": ("calm", "ambient", "classical", "lo-fi"),
+}
+
+
+def auto_candidates(category, seed, used):
+    """Offer a few mood matches and a varied set of alternatives from the licensed catalog."""
+    tracks = catalog()
+    Random(seed).shuffle(tracks)
+    tracks.sort(key=lambda track: track["id"] in used)
+    moods = _AUTO_MOODS.get(category, ("upbeat", "chill", "ambient"))
+    matching = [t for t in tracks if any(m in f"{t['mood']} {t['genre']}".lower() for m in moods)]
+    picks = matching[:4]
+    genres = {t["genre"] for t in picks}
+    for t in tracks:
+        if len(picks) >= 12:
+            break
+        if t["genre"] not in genres:
+            picks.append(t)
+            genres.add(t["genre"])
+    return picks
+
+
+def auto_fallback(category, used):
+    moods = _AUTO_MOODS.get(category, ("upbeat", "chill", "ambient"))
+    return min(TRACKS, key=lambda key: (
+        key in used,
+        not any(m in f"{TRACKS[key][1]} {TRACKS[key][2]}".lower() for m in moods),
+    ))
 
 
 def has_track(track):
