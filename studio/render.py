@@ -3,9 +3,10 @@ import re
 import shutil
 import subprocess
 import tempfile
+import traceback
 from pathlib import Path
 
-from . import config, roman, hook_art, music, stacked, templates
+from . import config, roman, hook_art, music, split, stacked, templates
 from .media import NO_WINDOW, probe, run
 
 W, H = config.OUT_W, config.OUT_H
@@ -201,7 +202,8 @@ LAYOUTS = {"blur": "Full frame + blurred fill", "zoom": "Zoomed in + blurred fil
            "left": "Fill the screen, keep the left side", "right": "Fill the screen, keep the right side",
            "fit": "Full frame on black", "split": "Split screen: left half on top, right half below (two people)",
            "gameplay": "Gameplay fills the screen, facecam in the corner",
-           "stacked": "Facecam on top, gameplay below"}
+           "stacked": "Facecam on top, gameplay below",
+           "podcast": "Podcast split screen: two people one above the other, one full screen, switching with the camera"}
 _FILLS = ("crop", "left", "right", "gameplay")      # layouts where the picture covers the whole frame
 
 
@@ -387,10 +389,35 @@ def _mark_events(mark, dur) -> list:
             f"\\alpha&H{alpha}&\\c&HFFFFFF&\\bord2\\3c&H000000&\\3a&H{alpha}&}}{text}"]
 
 
+def _placed(groups, places, start):
+    """Caption groups where the captions move with the layout (places: [(from, to, height)] in clip seconds): a group
+    never runs across a change, and each comes with its height and the moment it must be gone."""
+    def at(w):
+        t = w["s"] - start
+        return next((i for i, (a, b, _y) in enumerate(places) if t < b), len(places) - 1)
+    out, spots = [], []
+    for g in groups:
+        cur, here = [], None
+        for w in g:
+            i = at(w)
+            if cur and places[i][2] != places[here][2]:
+                out.append(cur)
+                spots.append((places[here][2], places[here][1]))
+                cur = []
+            cur.append(w)
+            here = i
+        out.append(cur)
+        last = here                                   # gone at the next change of height
+        while last + 1 < len(places) and places[last + 1][2] == places[here][2]:
+            last += 1
+        spots.append((places[here][2], places[last][1]))
+    return out, spots
+
+
 def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, note="", info=None, show_hook=True, hook_look=None,
-              script="", mark=None) -> str:
+              script="", places=None, mark=None) -> str:
     """style_name: a template's caption settings (dict), or one of the old style names. script: "ur" or "hi" when the
-    captions are in Urdu or Hindi script."""
+    captions are in Urdu or Hindi script. places: where the captions go over time, when the layout changes."""
     st = _cap_style(style_name)
     if script in SCRIPT_FONTS:
         name, _f, grow = SCRIPT_FONTS[script]
@@ -433,10 +460,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for i, w in enumerate(inside[:-1]):
         w["e"] = max(w["s"], min(w["e"], inside[i + 1]["s"]))
     groups = _groups(inside, st["per"])
+    spots = None
+    if places and groups:
+        groups, spots = _placed(groups, places, start)
     if script in SCRIPT_FONTS:                           # a whole line at a time: the word being said in its colour
         for gi, g in enumerate(groups):
             g_start = max(0.0, g[0]["s"] - start)
             g_end = min(g[-1]["e"] + 0.25, groups[gi + 1][0]["s"] if gi + 1 < len(groups) else end) - start
+            if spots:
+                cap_y, until = spots[gi]
+                g_end = min(g_end, max(until, g_start + 0.1))
             if g_end - g_start < 0.02:
                 continue
             texts = [re.sub(r"[.,;:]+$", "", x["w"]) for x in g]
@@ -467,6 +500,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for gi, g in enumerate(groups):
         g_start = max(0.0, g[0]["s"] - start)
         g_end = min(g[-1]["e"] + 0.25, groups[gi + 1][0]["s"] if gi + 1 < len(groups) else end) - start
+        if spots:
+            cap_y, until = spots[gi]
+            g_end = min(g_end, max(until, g_start + 0.1))
         if g_end - g_start < 0.02:
             continue
         texts = []
@@ -686,7 +722,7 @@ def needed_height(look, cam_src=None, aspect=16 / 9) -> int:
         return max(dw / (rw * aspect), dh / rh) / SLACK
     if cam and cam["stack"]:
         dw, dh = W, H - cam["bh"]
-    elif look["layout"] in _FILLS:
+    elif look["layout"] in _FILLS or look["layout"] == "podcast":    # a podcast split enlarges narrow parts
         dw, dh = W, H
     elif look["layout"] == "zoom":
         dw, dh = W, 1000
@@ -794,8 +830,19 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
         gw, gh = min(_even(src_w * gs["w"]), src_w - gx), min(_even(src_h * gs["h"]), src_h - gy)
         gw, gh = max(2, gw), max(2, gh)
         crop = f"crop={gw}:{gh}:{gx}:{gy},"
-    layout, fg_h, hook_y, cap_y = geometry(gw if gs else src_w, gh if gs else src_h, look["layout"])
-    cam = cam_plan(look.get("cam"), look.get("cam_src") or extras.get("cam"), src_w, src_h)   # drawn on the style, else found
+    seen_w, seen_h = (gw, gh) if gs else (src_w, src_h)
+    want, podcast = look["layout"], None
+    if want == "podcast":                 # who is on screen, shot by shot (studio/split.py)
+        try:
+            podcast = split.plan(src, start, end, seen_w, seen_h, crop)
+        except Exception:  # noqa: BLE001 - the clip is still made, whole over a blurred fill
+            traceback.print_exc()
+        if not podcast:
+            want = "blur"
+    layout, fg_h, hook_y, cap_y = geometry(seen_w, seen_h, want)
+    if podcast:
+        layout, hook_y, cap_y = "podcast", 200, H // 2
+    cam = None if podcast else cam_plan(look.get("cam"), look.get("cam_src") or extras.get("cam"), src_w, src_h)   # drawn on the style, else found
     # The gameplay layout: the webcam (found in pixels of the source, clip["facecam"]) in the top corner of the game,
     # and the heading just below it. With a style's own cam box, that box is used instead.
     face = clip.get("facecam") if layout == "gameplay" and not cam and not gs else None
@@ -812,6 +859,7 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
         hook_y = H - 380 if cam["by"] == 0 else 300
     if layout == "stacked" and _clean(clip.get("hook", "")):
         cap_y = FACE_H + 220
+    places = split.cap_places(podcast) if podcast and look["cap"]["y"] is None else None
     if look["cap"]["y"] is not None:                     # the template puts the captions somewhere of its own
         cap_y = int(H * look["cap"]["y"] / 100)
     if look["hook"]["y"] is not None:
@@ -821,7 +869,7 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     image_hook = layout == "stacked" and look["hook"]["show"] and _clean(clip.get("hook", ""))
     ass = build_ass(words if show_caps else [], start, end, "" if image_hook else clip.get("hook", ""), look["cap"], clip.get("highlight_words", []),
                     hook_y, cap_y, note=extras.get("note", ""), info=info, show_hook=look["hook"]["show"],
-                    hook_look=look["hook"], script=clip.get("script") or "", mark=look.get("mark"))
+                    hook_look=look["hook"], script=clip.get("script") or "", places=places, mark=look.get("mark"))
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
     # open files whose full path is longer than 260 characters on Windows, which a data folder deep inside other
     # folders easily reaches. Inside the work folder every name is short and relative (a drive colon would also
@@ -833,14 +881,19 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
         if image_hook:
             hook_art.make(_clean(clip["hook"]), W, brush=True).save(work / "hook.png")
         look["music"] = music.clean(clip["music"] if "music" in clip else look.get("music"))
-        got = _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, look=look, cam=cam, crop=crop, face=face, info=info, extras=extras, meta=meta, hook_y=hook_y if image_hook else None, automatic_music=clip.get("automatic_music_mix", False))
+        got = _render_in(
+            work, src, out_dir, name, start, end, layout, fg_h, ass,
+            look=look, cam=cam, crop=crop, face=face, info=info, extras=extras, meta=meta,
+            hook_y=hook_y if image_hook else None, automatic_music=clip.get("automatic_music_mix", False),
+            picture=split.graph(podcast, crop) if podcast else "",
+        )
         return dict(got, layout=requested if requested == "stacked" else layout)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
 def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, look, cam, crop, face,
-               info, extras, meta, hook_y=None, automatic_music=False) -> dict:
+               info, extras, meta, hook_y=None, automatic_music=False, picture="") -> dict:
     global _qsv_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     (work / "f").mkdir()
@@ -852,7 +905,9 @@ def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layo
             more += ["-loop", "1", "-i", f.name]
             frame[k] = n
             n += 1
-    if cam:
+    if picture:                                           # the podcast split's own graph
+        fc = picture
+    elif cam:
         fc = cam_filter(cam, layout, fg_h, crop, frame)
     else:
         fc = _filter(layout, fg_h, face).replace("[0:v]", "[0:v]" + crop, 1)

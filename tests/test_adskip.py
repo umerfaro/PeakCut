@@ -48,5 +48,32 @@ adskip.ensure = lambda: False
 check("without the relay, ffmpeg reads Twitch directly", adskip.prepare(cmd)[2] == UP)
 check("a command without Twitch is left as it is", adskip.prepare(["ffmpeg", "-i", "a.mp4"]) == ["ffmpeg", "-i", "a.mp4"])
 
+# Twitch's newer format (fMP4): each stretch has a setup piece (#EXT-X-MAP). The stream's own must stay when the
+# opening ad (with its own setup piece) is left out, or ffmpeg can't read a single piece ("Invalid data").
+fm = """#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:5
+#EXT-X-DATERANGE:ID="stitched-ad-1",CLASS="twitch-stitched-ad",START-DATE="2026-11-24T20:41:42.000Z",DURATION=4.0
+#EXT-X-MAP:URI="https://cdn/ad-init.mp4"
+#EXT-X-PROGRAM-DATE-TIME:2026-11-24T20:41:42.000Z
+#EXTINF:2.000,Amazon|1
+https://cdn/ad1.mp4
+#EXT-X-PROGRAM-DATE-TIME:2026-11-24T20:41:44.000Z
+#EXTINF:2.000,Amazon|1
+https://cdn/ad2.mp4
+#EXT-X-DISCONTINUITY
+#EXT-X-MAP:URI="https://cdn/live-init.mp4"
+#EXT-X-PROGRAM-DATE-TIME:2026-11-24T20:41:46.000Z
+#EXTINF:2.000,live
+https://cdn/live1.mp4
+#EXT-X-PROGRAM-DATE-TIME:2026-11-24T20:41:48.000Z
+#EXTINF:2.000,live
+https://cdn/live2.mp4
+"""
+out = adskip.relay("https://usher/fmp4.m3u8", fm)
+check("fMP4: the ad and its setup piece are left out", "ad1" not in out and "ad-init" not in out, out)
+check("...the stream's own setup piece comes before its first piece", out.index("live-init.mp4") < out.index("live1.mp4"), out)
+check("...once per stretch, not before every piece", out.count("live-init.mp4") == 1, out)
+check("...and the list says a version that allows it", "#EXT-X-VERSION:6" in out, out)
 print("\nALL PASS" if not fails else f"\n{len(fails)} FAILED: {fails}")
 sys.exit(1 if fails else 0)

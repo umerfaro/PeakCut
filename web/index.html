@@ -2053,6 +2053,10 @@ textarea.cpg-in{height:auto;padding:8px 12px;resize:vertical}.cpg-in:focus{borde
 .tp9.nopic .tp9-fill,.tp9.nopic .tp9-band{background:linear-gradient(160deg,#5B3B2C 0%,#2B1D17 55%,#3E2A21 100%)}
 .tp9.nopic .tp9-band{background:linear-gradient(135deg,#C26A3A 0%,#7A4129 50%,#3A5A6B 100%)}
 .tp9-fill{position:absolute;inset:0;overflow:hidden}.tp9-fill img{width:100%;height:100%;object-fit:cover;filter:blur(3cqw) brightness(.55);transform:scale(1.15)}
+.tp9-half{position:absolute;left:0;right:0;height:50%;overflow:hidden;box-sizing:border-box}
+.tp9-half.up{top:0;border-bottom:.35cqw solid #000}.tp9-half.low{bottom:0;border-top:.35cqw solid #000}
+.tp9-half img,.tp9-half video.tpv{width:100%;height:100%;object-fit:cover;display:block}
+.tp9-half.up img,.tp9-half.up video.tpv{object-position:22% 30%}.tp9-half.low img,.tp9-half.low video.tpv{object-position:78% 30%}
 .tp9-band{position:absolute;left:0;right:0;overflow:hidden}.tp9-band.full{inset:0}.tp9-band img{width:100%;height:100%;object-fit:cover;display:block}
 .tp9-cap{position:absolute;left:3%;right:3%;transform:translateY(-50%);text-align:center;line-height:1.1;white-space:nowrap;paint-order:stroke fill;letter-spacing:0}
 .tp9-cap span{display:inline-block;transform-origin:center}
@@ -2434,7 +2438,7 @@ function startTour() {
      sel: '#nav [data-v="library"]', side: 1, dock: "bottom", chips: [["film", "All videos", 1], ["sliders", "Edit"], ["down", "Download"]]},
     {t: "The AI picks the moments", x: "This shows which AI this server uses and how much it has worked today. Open it to see what the AI was used for.",
      sel: "#foot .ai-card", side: 1, dock: "top", chips: [["bolt", "AI", 1], ["chart", "See usage"]]},
-    {t: "Your account and alerts", x: "The bell tells you when clips are ready or a recording ends. Your name opens Settings, where you connect the accounts you post to.",
+    {t: "Your account and alerts", x: "The bell tells you when clips are ready or a recording ends. Settings, just above, is where you connect the accounts you post to.",
      sel: "#foot .me", side: 1, dock: "top", chips: [["bell", "Notifications", 1], ["cog", "Settings"], ["plug", "Connect accounts"]]},
     {t: "You're ready to clip", x: "Paste your first link and press Make clips.",
      chips: [["link", "Paste a link"], ["scissors", "Make clips", 1]]}];
@@ -2719,7 +2723,7 @@ function openAcct() {
   const u = S.status.user;
   const on = S.status.accounts !== false;
   p.innerHTML = `${on ? `<div class="who2"><b>${esc(u.name)}</b><span>${esc(u.email)}</span></div>` : ""}
-    <button data-act="go" data-v="settings">${ic("cog")}Settings</button><button data-act="go" data-v="styles">${ic("film")}Styles</button><button data-act="go" data-v="usage">${ic("bolt")}AI</button><button data-act="tour">${ic("play")}Take the tour</button>${S.status.links?.follow ? `<button data-act="feedback">${ic("chat")}Send feedback</button>` : ""}
+    <button data-act="go" data-v="usage">${ic("bolt")}AI</button><button data-act="tour">${ic("play")}Take the tour</button>${S.status.links?.follow ? `<button data-act="feedback">${ic("chat")}Send feedback</button>` : ""}
     ${on ? `<button class="danger" data-act="logout">${ic("signout")}Sign out</button>` : ""}`;
   openPop(p, $("[data-act=acctmenu]"));
 }
@@ -2852,10 +2856,10 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
     (S.status.user?.role === "admin" && S.status.accounts !== false ? `<h4><span>Owner</span></h4><a class="nav-item" href="/admin" title="Admin dashboard" style="text-decoration:none">${ic("shield")}<span class="label">Admin dashboard</span></a>` : ""));
   const st = S.status;
   const k = S.status.ai;
-  put($("#foot"), (k ? `<button class="ai-card ${S.view === "usage" ? "on" : ""}" data-act="go" data-v="usage" title="${k.ready ? `AI: ${esc(k.provider || "ready")}, ${k.today_calls || 0} calls today` : "The AI is not set up"}">
+  put($("#foot"), (st.user ? nav("styles", ic("sliders"), "Styles") + nav("settings", ic("cog"), "Settings") : "") + (k ? `<button class="ai-card ${S.view === "usage" ? "on" : ""}" data-act="go" data-v="usage" title="${k.ready ? `AI: ${esc(k.provider || "ready")}, ${k.today_calls || 0} calls today` : "The AI is not set up"}">
       <span class="ai-ic">${ic("bolt")}</span><span class="ai-tx"><small>AI</small><b>${k.ready ? esc(k.provider || "Ready") : "Not set up"}</b></span>${k.ready ? `<span class="ai-n">${(k.today_calls || 0).toLocaleString()} today</span>` : ""}</button>` : "") +
     (S.status.user ? `<div class="me"><button class="me-btn" data-act="acctmenu" aria-haspopup="menu" aria-expanded="false">${meAvatar(S.status.user)}
-      <span class="who">${S.status.accounts === false ? `<b>Settings</b><span>AI key, connected apps</span>` : `<b>${esc(S.status.user.name)}</b><span>${esc(S.status.user.email)}</span>`}</span></button>
+      <span class="who">${S.status.accounts === false ? `<b>More</b><span>AI, tour, updates</span>` : `<b>${esc(S.status.user.name)}</b><span>${esc(S.status.user.email)}</span>`}</span></button>
       <button class="icon-btn bell" data-act="bell" title="Notifications" aria-label="Notifications${S.status.unread ? `, ${S.status.unread} new` : ""}" aria-haspopup="dialog">${ic("bell")}${S.status.unread ? `<span class="dotn">${S.status.unread > 9 ? "9+" : S.status.unread}</span>` : ""}</button></div>` : ""));
   const c = creator();
   const recording = S.creators.filter(x => x.live_job).length;
@@ -3641,7 +3645,7 @@ function drawAdd(variant) {
     </div></div>`}</form>`;
   drawAtt(); hqNote();
 }
-const LAYOUT_SHORT = {blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen", left:"Keep left", right:"Keep right", fit:"Black bars", split:"Split screen", gameplay:"Gameplay + facecam", stacked:"Facecam on top"};
+const LAYOUT_SHORT = {blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen", left:"Keep left", right:"Keep right", fit:"Black bars", split:"Split screen", gameplay:"Gameplay + facecam", stacked:"Facecam on top", podcast:"Podcast split"};
 const CAP_LOOK = {
   bounce:{font:"'Archivo Black'", hl:"#FFFF00", up:true}, glow:{font:"Poppins", hl:"#C46BFF", up:true, w:800},
   pop:{font:"Anton", hl:"#FF3C3C", up:true}, word:{font:"'Archivo Black'", hl:"#FFFF00", up:true},
@@ -4438,6 +4442,7 @@ const campRules = (c, e) => ({min_len: c.min_len, max_len: c.max_len, max_clips:
 function campGeo(layout) {
   if (layout === "zoom") return {top: 460, h: 1000, hook: 270, cap: 1640};
   if (layout === "crop") return {top: 0, h: 1920, hook: 300, cap: 1380};
+  if (layout === "podcast") return {top: 0, h: 1920, hook: 200, cap: 960};   // two speakers: captions on the line between
   return {top: 656, h: 608, hook: 466, cap: 1444};
 }
 function campPreview(c, e) {
@@ -5301,7 +5306,7 @@ const TPL_WORDS = ["no", "way", "he", "actually", "did", "that", "bro", "this", 
 // the captions sit on the line between, and the heading goes in the game
 function tplGeo(look) {
   const g = {...campGeo(look.layout)}, m = look.cam;
-  if (!m) return g;
+  if (!m || look.layout === "podcast") return g;
   const stack = m.w >= 99.6 && (m.y <= 0.3 || m.y + m.h >= 99.7);
   if (!stack) return g;
   const top = m.y <= 0.3, bh = m.h * 19.2;
@@ -5386,11 +5391,13 @@ function tplPrev(look, o = {}) {
   // the fill behind the video is a picture blurred on the server: blurring in the browser made long pages lag
   const fill = `<div class="tp9-fill" style="background-image:url('${tplSrc("blur.jpg")}')"></div>`;
   const vb = o.edit ? ' data-pick="video" data-name="Video"' : "";
-  const band = g.stack ? `<div class="tp9-band" style="top:${pct(g.top)};height:${pct(g.h)}"${vb}>${mov}</div>`
+  const half = at => `<div class="tp9-half ${at}"${vb}>${mov}</div>`;
+  const band = look.layout === "podcast" ? half("up") + half("low")
+    : g.stack ? `<div class="tp9-band" style="top:${pct(g.top)};height:${pct(g.h)}"${vb}>${mov}</div>`
     : look.layout === "crop" ? `<div class="tp9-band full"${vb}>${mov}</div>` : `${fill}<div class="tp9-band" style="top:${pct(g.top)};height:${pct(g.h)}"${vb}>${mov}</div>`;
   // the cam box: the real cam from the preview video (where it was drawn, else where it was found), else a placeholder;
   // it plays only in the editor (a page of styles shows its first picture, to stay light)
-  const m = look.cam, sc = look.cam_src || S.tpl.sample_cam, view = sc ? tplInset(sc) : "";
+  const m = look.layout === "podcast" ? null : look.cam, sc = look.cam_src || S.tpl.sample_cam, view = sc ? tplInset(sc) : "";
   const real = sc ? (o.video === "full" ? tplVid(view) : `<img src="${tplSrc("jpg")}" alt="" decoding="async" style="${view}">`) : "";
   // corners: % of the cam box's shorter side (50: fully round), as the clip draws them
   const cs = look.cam_style || {}, cst = (cs.r && m ? `border-radius:${tplPx(Math.min(cs.r, 50) / 100 * Math.min(m.w * 10.8, m.h * 19.2))};` : "") + (cs.bw ? `--cb:inset 0 0 0 ${tplPx(cs.bw)} #${cs.bc || "FFFFFF"};` : "");
@@ -5570,6 +5577,7 @@ const LAYOUT_PRESETS = [
   ["Full + blur", {layout: "blur", cam: null, cam_style: NO_CAM_LOOK}],
   ["Zoomed in", {layout: "zoom", cam: null, cam_style: NO_CAM_LOOK}],
   ["Fill the screen", {layout: "crop", cam: null, cam_style: NO_CAM_LOOK}],
+  ["Podcast split", {layout: "podcast", cam: null, cam_style: NO_CAM_LOOK}],
   ["Cam on top", {layout: "crop", cam: {x: 0, y: 0, w: 100, h: 40}, cam_style: NO_CAM_LOOK}],
   ["Cam at the bottom", {layout: "crop", cam: {x: 0, y: 60, w: 100, h: 40}, cam_style: NO_CAM_LOOK}],
   ["Cam in the corner", {layout: "crop", cam: {x: 4, y: 4, w: 44, h: 17}, cam_style: {r: 18, bw: 4, bc: "FFFFFF"}}],
@@ -5700,12 +5708,13 @@ function tplCtl() {
         ${range("mark.opacity", "Opacity", 20, 60, mk.opacity ?? 35, v => v + "%")}
         ${place("mark.y", mk.y ?? 92)}</div>`;
   } else {
-    const lay = Object.entries(S.tpl.layouts || {}).map(([k, l]) => tile("layout", k, `${tplPrev({...E.look, layout: k, hook: {...E.look.hook, show: false}, cap: {...c, y: null}}, {mini: true})}<em>${esc(l)}</em>`, E.look.layout === k)).join("");
+    const lay = Object.entries(S.tpl.layouts || {}).map(([k, l]) => tile("layout", k, `${tplPrev({...E.look, layout: k, cam: k === "podcast" ? null : E.look.cam, hook: {...E.look.hook, show: false}, cap: {...c, y: null}}, {mini: true})}<em>${esc(l)}</em>`, E.look.layout === k)).join("");
+    const pod = E.look.layout === "podcast";
     E.look.cam_style ||= {r: 0, bw: 0, bc: "FFFFFF"};
     const m = E.look.cam, at = (k, l, v) => `<button type="button" class="btn sm${m && JSON.stringify(m) === JSON.stringify(v) ? " primary" : ""}" data-act="tplcam" data-k="${k}">${l}</button>`;
     const pre = presets(LAYOUT_PRESETS, E.look, v => ({...E.look, ...v, hook: {...E.look.hook, show: false}}));
-    box.innerHTML = `${pre}<div class="tpe-sec"><h4>Video</h4><div class="tpe-lays">${lay}</div>${m && tplGeo(E.look).stack ? `<p class="tpe-note">The cam fills the full width, so the game fills the rest of the screen.</p>` : ""}</div>
-      <div class="tpe-sec"><h4>Streamer cam</h4>${m ? `<p class="tpe-note">Your streamer's camera goes in this box. Drag it to move it, pull its corner to resize it.</p>
+    box.innerHTML = `${pre}<div class="tpe-sec"><h4>Video</h4><div class="tpe-lays">${lay}</div>${m && tplGeo(E.look).stack ? `<p class="tpe-note">The cam fills the full width, so the game fills the rest of the screen.</p>` : ""}${pod ? `<p class="tpe-note">For podcasts: two people on screen are shown one above the other, one person fills the screen. It switches by itself with the camera.</p>` : ""}</div>
+      ${pod ? "" : `<div class="tpe-sec"><h4>Streamer cam</h4>${m ? `<p class="tpe-note">Your streamer's camera goes in this box. Drag it to move it, pull its corner to resize it.</p>
         <div class="tpe-cam">${at("top", "Top half", CAM_AT.top)}${at("bottom", "Bottom half", CAM_AT.bottom)}${at("corner", "Corner", CAM_AT.corner)}<span class="grow"></span><button type="button" class="btn sm ghost" data-act="tplcam" data-k="off">${ic("trash")}Remove</button></div>
         ${range("cam_style.r", "Rounded corners", 0, 50, E.look.cam_style.r, v => Number(v) >= 50 ? "Round" : Number(v) ? v + "%" : "None")}
         ${range("cam_style.bw", "Border", 0, 24, E.look.cam_style.bw, v => v ? v + " px" : "None")}
@@ -5713,7 +5722,7 @@ function tplCtl() {
         : `<p class="tpe-note">Put the streamer's camera in the clip. PeakCut finds it in their stream by itself.</p><button type="button" class="btn" data-act="tplcam" data-k="top">${ic("plus")}Add streamer cam</button>`}
         ${m ? `<p class="tpe-note tpe-gap">Where's the cam in the stream?</p>
         <div class="seg"><button type="button" data-act="tplcsrc" data-k="ai" aria-pressed="${!E.look.cam_src}">AI picks it</button><button type="button" data-act="tplcsrc" data-k="draw" aria-pressed="${!!E.look.cam_src}">Draw it</button></div>
-        ${E.look.cam_src ? srcPic("cam", E.look.cam_src, "Cam") : aiPic()}` : ""}</div>
+        ${E.look.cam_src ? srcPic("cam", E.look.cam_src, "Cam") : aiPic()}` : ""}</div>`}
       <div class="tpe-sec" id="tpe-part"><h4>Part of the video</h4><p class="tpe-note">Zoomed-in stream, or only one part matters? Draw the part to show.</p>
         <div class="seg"><button type="button" data-act="tplgsrc" data-k="all" aria-pressed="${!E.look.game_src}">All of it</button><button type="button" data-act="tplgsrc" data-k="part" aria-pressed="${!!E.look.game_src}">Pick a part</button></div>
         ${E.look.game_src ? srcPic("game", E.look.game_src, "Video") : ""}</div>`;
@@ -5726,6 +5735,7 @@ function tplSet(path, v) {
 document.addEventListener("click", e => {
   const b = e.target.closest("#tpectl [data-tf]"); if (!b || !S.tplEdit) return;
   const v = b.dataset.v, path = b.dataset.tf;
+  if (path === "layout" && v === "podcast") S.tplEdit.look.cam = null;
   tplSet(path, path === "cap.per" ? Number(v) : v); tplCtl();
 });
 document.addEventListener("input", e => {
@@ -5769,6 +5779,7 @@ document.addEventListener("pointerdown", e => {
 function tplDest(kind, look, b) {
   if (kind === "cam") { const m = look.cam || {w: 100, h: 40}; return [m.w * 10.8, m.h * 19.2]; }
   const g = tplGeo(look);
+  if (look.layout === "podcast") return [b.w * 16, b.h * 9];           // the speakers are found inside the part drawn
   if (g.stack || look.layout === "crop") return [1080, g.stack ? g.h : 1920];
   if (look.layout === "zoom") return [1080, 1000];
   return [1080, Math.min(1920, 1080 * (b.h * 9) / (b.w * 16))];      // blurred fill: the whole width, as tall as it is

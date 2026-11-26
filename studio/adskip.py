@@ -51,7 +51,7 @@ def _when(s):
 
 def parse(text: str, base: str = "") -> tuple:
     """(target duration, ended, [segments]) of a media playlist; each segment {uri, dur, ad, lines}."""
-    ads, segs, cur, target, ended = [], [], [], 2, False
+    ads, segs, cur, target, ended, init = [], [], [], 2, False, ""      # init: the stretch's setup piece (fMP4)
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -73,6 +73,9 @@ def parse(text: str, base: str = "") -> tuple:
                 pass
         elif line.startswith("#EXT-X-ENDLIST"):
             ended = True
+        elif line.startswith("#EXT-X-MAP"):
+            a = _attrs(line)
+            init = f'#EXT-X-MAP:URI="{urllib.parse.urljoin(base, a.get("URI", ""))}"' if a.get("URI") else ""
         elif line.startswith(("#EXTINF", "#EXT-X-PROGRAM-DATE-TIME", "#EXT-X-DISCONTINUITY")):
             cur.append(line)
         elif not line.startswith("#"):
@@ -83,7 +86,7 @@ def parse(text: str, base: str = "") -> tuple:
             except ValueError:
                 dur = 2.0
             pdt = next((_when(x.split(":", 1)[1]) for x in cur if x.startswith("#EXT-X-PROGRAM-DATE-TIME")), None)
-            segs.append({"uri": urllib.parse.urljoin(base, line), "dur": dur, "title": title, "pdt": pdt,
+            segs.append({"uri": urllib.parse.urljoin(base, line), "dur": dur, "title": title, "pdt": pdt, "init": init,
                          "lines": [x for x in cur if not x.startswith("#EXT-X-DISCONTINUITY")]})
             cur = []
     for s in segs:
@@ -115,11 +118,15 @@ def relay(upstream: str, text: str) -> str:
         kept = list(st["kept"])
         for k in [k for k, v in _streams.items() if time.time() - v["t"] > 900]:       # streams nobody reads any more
             _streams.pop(k, None)
-    out = ["#EXTM3U", "#EXT-X-VERSION:3", f"#EXT-X-TARGETDURATION:{max(target, 1)}",
+    out = ["#EXTM3U", "#EXT-X-VERSION:6", f"#EXT-X-TARGETDURATION:{max(target, 1)}",
            f"#EXT-X-MEDIA-SEQUENCE:{kept[0][0] if kept else 0}"]
+    shown = None
     for _, s, gap in kept:
         if gap:
             out.append("#EXT-X-DISCONTINUITY")
+        if s.get("init") and (gap or s["init"] != shown):     # each stretch says how to read its pieces (fMP4)
+            out.append(s["init"])
+            shown = s["init"]
         out += s["lines"]
         out.append(s["uri"])
     if ended:

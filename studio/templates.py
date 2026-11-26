@@ -20,7 +20,7 @@ FONTS = {"Poppins ExtraBold": "Poppins-ExtraBold.ttf", "Poppins Black": "Poppins
          "Permanent Marker": "PermanentMarker-Regular.ttf", "Righteous": "Righteous-Regular.ttf"}
 # how the word being said stands out: grows in its colour, sits in a box of that colour, the said words fill with it, or nothing
 ANIMS = {"pop": "Pop", "box": "Box", "fill": "Fill", "none": "Plain"}
-LAYOUTS = ("blur", "zoom", "crop", "left", "right", "fit", "split", "gameplay", "stacked")
+LAYOUTS = ("blur", "zoom", "crop", "left", "right", "fit", "split", "gameplay", "stacked", "podcast")
 MAX_OWN = 30
 
 _CAP = {"show": True, "anim": "pop", "font": "Poppins ExtraBold", "color": "FFFFFF", "hi": "FFF000", "key": "FFFFFF", "outline": 7,
@@ -44,7 +44,8 @@ LEGACY = {"bounce": {},
 LEGACY_NAMES = {"bounce": "Bounce", "hype": "Hype", "clean": "Clean"}
 LAYOUT_NAMES = {"blur": "Full + blur", "zoom": "Zoomed in", "crop": "Fill the screen", "left": "Fill, keep the left side",
                 "right": "Fill, keep the right side", "fit": "Full frame on black", "split": "Split screen (two people)",
-                "stacked": "Facecam on top, gameplay below", "gameplay": "Gameplay + facecam in the corner"}
+                "stacked": "Facecam on top, gameplay below", "gameplay": "Gameplay + facecam in the corner",
+                "podcast": "Podcast split (follows the camera)"}
 
 BUILTIN = [
     {"id": "b-bounce", "name": "Bounce", "look": _look(LEGACY["bounce"])},
@@ -58,6 +59,7 @@ BUILTIN = [
     {"id": "b-minimal", "name": "Minimal", "look": _look({"anim": "none", "size": 80, "outline": 0, "shadow": True,
                                                           "upper": False, "per": 5, "y": 76}, hook={"show": False})},
     {"id": "b-full", "name": "Full screen", "look": _look(LEGACY["hype"], layout="crop")},
+    {"id": "b-podcast", "name": "Podcast split", "look": _look(LEGACY["bounce"], layout="podcast")},
     {"id": "b-cam", "name": "Cam on top", "look": _look(LEGACY["bounce"], layout="crop", cam={"x": 0, "y": 0, "w": 100, "h": 40})},
 ]
 BUILTIN.append({"id": "b-stacked", "name": LAYOUT_NAMES["stacked"], "look": _look(layout="stacked")})
@@ -130,12 +132,14 @@ def clean_look(raw) -> dict:
     cs = raw.get("cam_style") if isinstance(raw.get("cam_style"), dict) else {}
     # the cam's look: rounded corners (radius as % of the box's shorter side: 50 is fully round), and a border
     cam_style = {"r": _num(cs.get("r"), 0, 50, 0), "bw": _num(cs.get("bw"), 0, 24, 0), "bc": _hex(cs.get("bc"), "FFFFFF")}
-    return {"cap": cap, "hook": hook, "mark": mark, "cam": _cam(raw.get("cam")), "cam_style": cam_style,
+    layout = raw.get("layout") if raw.get("layout") in LAYOUTS else "blur"
+    cam = None if layout == "podcast" else _cam(raw.get("cam"))     # the podcast split places the people itself
+    return {"cap": cap, "hook": hook, "mark": mark, "cam": cam, "cam_style": cam_style,
             "cam_src": facecam.clean(raw.get("cam_src")),
             "game_src": facecam.clean(raw.get("game_src")),
             "music": music.clean(raw.get("music")),
             "auto_music": raw.get("auto_music") is True,
-            "layout": raw.get("layout") if raw.get("layout") in LAYOUTS else "blur"}
+            "layout": layout}
 
 
 def _cam(v):

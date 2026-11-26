@@ -85,6 +85,7 @@ def main() -> int:
                 ("content schedule: by day, moved, posted now, owner only", ["tests/test_schedule.py"]),
                 ("a campaign posts its clips by itself: score, gap, daily limit", ["tests/test_campaign_autopost.py"]),
                 ("templates: ready-made and own, picked per video or streamer, old looks kept", ["tests/test_templates.py"]),
+                ("podcast split screen: two people stacked, one full, switching with the camera", ["tests/test_split.py"]),
                 ("Twitch ads are left out of recordings", ["tests/test_adskip.py"]),
                 ("a YouTube post is posted once YouTube has processed it", ["tests/test_youtube_processing.py"]),
                 ("caption language: picked per video or streamer, translated line by line in sync", ["tests/test_caption_lang.py"]),
