@@ -71,13 +71,17 @@ Rules:
 - hook: the big text shown on the video, at most two short lines. One short, complete sentence of 3 to 7 words
   (never more than 40 characters). It must make a stranger stop scrolling and want to see how it ends: tease the
   moment with curiosity or tension (what's at stake, what's about to go wrong, a question they need answered), be
-  specific (who, what, the number), and never give the ending away. Vary how headings start: never begin every one
-  with "Bro" or "When". Write it the
-  way a sharp friend
+  specific (who, what, the number), and never give the ending away. Match the creator's energy from the channel name
+  and video title: an IShowSpeed clip should feel punchy, chaotic and high-retention like Speed; a Ducky Bhai clip
+  should feel like Ducky; a calm podcast should stay calm. Write how that creator's audience talks, not a generic
+  caption. Vary how headings start: never begin every one with "Bro" or "When". Write it the way a sharp friend
   would caption it, like "He put his rent money on red", "She didn't know the mic was still on",
   "Nobody explains this part of buying a house" or "He really thought that would work 💀".
   A sentence, never a list of keywords, never ALL CAPS: start it with a capital letter and write the rest normally. If the moment is funny, be funny; if it
   is serious, sad, shocking, wholesome or informative (a podcast, an interview, advice), match that.
+  Stay safe for YouTube and TikTok: never pair words like "kid", "child", "boy" or "girl" with violence, killing,
+  shooting or similar actions, even when it is only a game. Prefer punchy wording that keeps the chaos without
+  those filter-bait pairings.
   An emoji is optional, and most headings have none: only about one clip in four gets one. Add ONE at the end only
   when it really adds to the moment: 😭 or 💀 on a funny fail, 🤯 on a mind-blowing fact, 😳 on a shocking reveal.
   Serious, informative and emotional moments read better with none. In a podcast, interview or advice video, add one only for a truly
@@ -137,8 +141,8 @@ GAME_RULES = """
 This stream is {game}. Pick the moments that only mean something with that game in mind:
 - A play, a death, a jump scare, a glitch, a discovery, or the streamer reacting to one.
 - The hook is what was said at that moment, or, if nothing was said, the name of what happened in
-  two or three words ("1 vs 3", "The shot", "He got me", "Clutch"). Never a sentence that needs
-  the game explained.
+  two or three words ("1 vs 3", "The shot", "He got me", "Clutch"), still in that creator's energy.
+  Never a sentence that needs the game explained. Never pair "kid"/"child" with violence, even in-game.
 - The title names the game when the clip is about it.
 - The hashtags include {tags}.
 """
@@ -762,6 +766,10 @@ long. The moment that was picked runs from about {a:.1f}s to {b:.1f}s in this au
 5. Heading. hook: in the same language as the captions (Spanish captions, Spanish heading; English captions,
    English heading). The big text on the video for this exact cut, at most two short lines: one complete sentence of
    3 to 7 words (never more than 40 characters) that makes a stranger stop scrolling and want to see how it ends.
+   Match the creator's energy from the video title (and any earlier heading): IShowSpeed = punchy, chaotic,
+   high-retention; Ducky Bhai = Ducky's vibe; a calm creator stays calm. Write how that audience talks.
+   Stay safe for YouTube and TikTok: never pair "kid", "child", "boy" or "girl" with violence, killing, shooting
+   or similar actions, even in games. Keep the chaos without those filter-bait pairings.
    For Hindi or Urdu, the heading is Hinglish too. Tease it with curiosity or tension, be specific (who, what, the number), never give the ending away, start with a
    capital letter, never ALL CAPS. Never copy an example. Like "He put his rent money on red", "Nobody warned him about the third
    question" or "She thought the mic was off 💀", never a label like "Heavy bench attempt", and not always starting
@@ -1030,8 +1038,9 @@ def listen(audio: tuple, pcm, dur: float, a: float, b: float, min_len: int, max_
     prompt = LISTEN.format(dur=dur, a=a, b=b, why=f" Why it was picked: {_safe(why, 200)}" if why else "",
                            cut=(CUT_NEAR if near else CUT_FREE).format(mn=min_len, mx=max_len),
                            title=f"\nVideo title, for names and context: {_safe(title)}" if title else "",
-                           hook=(f"\nThe heading written earlier: \"{_safe(hook, 80)}\". Keep it only if it fits this cut, is "
-                                 "catchy and is in the same language as the captions; otherwise write a better one.") if hook and heading
+                           hook=(f"\nThe heading written earlier: \"{_safe(hook, 80)}\". Keep it only if it fits this cut, "
+                                 "matches the creator's energy, stays safe for YouTube/TikTok filters, is catchy and "
+                                 "is in the same language as the captions; otherwise write a better one.") if hook and heading
                            else "\nThis clip has no heading: skip step 5 and leave hook empty." if not heading else "",
                            transcript=("\nA simpler speech model's transcript of this audio: [start-end seconds] text. Its "
                                        "timings are exact, its words not always. Take start and end from these marks: start "
