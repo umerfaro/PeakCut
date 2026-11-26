@@ -855,6 +855,24 @@ def render_one(job, clip, words):
         src = Path(clip["src"]) if clip.get("src") else Path(job["source_path"])
         if not src.is_file():
             raise RuntimeError("The original video is no longer kept, so this clip can't be made again. Add the video again to get new clips from it.")
+        need = int((job.get("options") or {}).get("quality") or 1080)
+        try:
+            got_h = int(media.probe(src)["height"])
+        except Exception:  # noqa: BLE001 - fall back to what the job last knew
+            got_h = int(job.get("height") or 0)
+        # A remake can keep a soft stretch from when YouTube only offered 360p. Drop it and fetch again at the asked quality.
+        if (clip.get("src") and got_h and need and got_h < need / 2
+                and (job.get("source") or {}).get("type") == "url" and (job.get("source") or {}).get("url")):
+            try:
+                src.unlink(missing_ok=True)
+            except OSError:
+                pass
+            for key in ("src", "src_offset", "src_end"):
+                clip.pop(key, None)
+            _piece_again(job, clip)
+            off = clip.get("src_offset", 0.0)
+            src = Path(clip["src"])
+            got_h = int(media.probe(src)["height"])
         if not clip.get("src"):
             clip["end"] = min(clip["end"], job["duration"])
         if not clip.get("heard") and not clip.get("version") and not clip.get("listen_error") and can_listen():
@@ -949,8 +967,7 @@ def render_one(job, clip, words):
             box = clip["look"].get("cam_src") or _cam_box(job, who, src)          # drawn on the style, else found
             if box:
                 extras = {**(extras or {}), "cam": box}
-        need, got_h = int((job.get("options") or {}).get("quality") or 1080), int(job.get("height") or 0)
-        clip["soft"] = bool(got_h and need > 1080 and got_h < need / 2)     # e.g. a 720p video with a zoomed-in cam
+        clip["soft"] = bool(got_h and need and got_h < need / 2)   # e.g. 360p kept when 1080p was asked for
         automatic = _auto_music(job, clip, words)
         if automatic:
             local.update(music=automatic, automatic_music_mix=True)

@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from . import config, roman, hook_art, music, stacked, templates
-from .media import NO_WINDOW, run
+from .media import NO_WINDOW, probe, run
 
 W, H = config.OUT_W, config.OUT_H
 FACE_H = round(H * .40 / 2) * 2
@@ -663,7 +663,9 @@ def cam_plan(dst, src_box, src_w, src_h):
         bx, bw = 0, W
         by = 0 if by <= 4 else H - bh
     sx, sy = _even(src_w * src_box["x"]) if src_box["x"] else 0, _even(src_h * src_box["y"]) if src_box["y"] else 0
+    sx, sy = min(sx, max(0, src_w - 2)), min(sy, max(0, src_h - 2))
     sw, sh = min(_even(src_w * src_box["w"]), src_w - sx), min(_even(src_h * src_box["h"]), src_h - sy)
+    sw, sh = max(2, sw), max(2, sh)
     return {"bx": bx, "by": by, "bw": bw, "bh": bh, "sx": sx, "sy": sy, "sw": sw, "sh": sh, "stack": stack,
             "seam": by + bh if by == 0 else by}
 
@@ -776,11 +778,21 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     extras = extras or {}
     out_dir.mkdir(parents=True, exist_ok=True)
     start, end = clip["start"], clip["end"]
+    # Crop and cam boxes are shares of THIS file. The job may still say 1080p from the stream listing while the
+    # saved piece is smaller (YouTube only gave 360p for that stretch): use the file's own size, or ffmpeg fails.
+    try:
+        got = probe(src)
+        if got["width"] >= 16 and got["height"] >= 16:
+            src_w, src_h = got["width"], got["height"]
+    except Exception:  # noqa: BLE001 - fall back to the size the caller passed
+        pass
     look = templates.clean_look(clip["look"]) if isinstance(clip.get("look"), dict) else templates.legacy(clip.get("style", "bounce"), clip.get("layout", "blur"))
     gs, crop = look.get("game_src"), ""
     if gs:                                # only this part of the video is shown (a zoomed-in stream, say)
         gx, gy = _even(src_w * gs["x"]) if gs["x"] else 0, _even(src_h * gs["y"]) if gs["y"] else 0
+        gx, gy = min(gx, max(0, src_w - 2)), min(gy, max(0, src_h - 2))
         gw, gh = min(_even(src_w * gs["w"]), src_w - gx), min(_even(src_h * gs["h"]), src_h - gy)
+        gw, gh = max(2, gw), max(2, gh)
         crop = f"crop={gw}:{gh}:{gx}:{gy},"
     layout, fg_h, hook_y, cap_y = geometry(gw if gs else src_w, gh if gs else src_h, look["layout"])
     cam = cam_plan(look.get("cam"), look.get("cam_src") or extras.get("cam"), src_w, src_h)   # drawn on the style, else found

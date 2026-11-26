@@ -107,6 +107,10 @@ with ctx.as_user(u.id):
     t = templates.get("b-cam")
     check("there's a ready-made style with the cam on top", t and t["look"]["cam"] == {"x": 0, "y": 0, "w": 100, "h": 40})
     check("a cam box is kept inside the frame", templates.clean_look({"cam": {"x": 90, "y": -5, "w": 30, "h": 200}})["cam"] == {"x": 70.0, "y": 0.0, "w": 30.0, "h": 100.0})
+    tiny = render.cam_plan({"x": 33.7, "y": 2.5, "w": 34.0, "h": 19.1},
+                           {"x": 0.806, "y": 0.21, "w": 0.194, "h": 0.254}, 640, 360)
+    check("a cam cut stays inside a small source file",
+          tiny["sx"] + tiny["sw"] <= 640 and tiny["sy"] + tiny["sh"] <= 360 and tiny["sw"] >= 2 and tiny["sh"] >= 2, str(tiny))
     plan = render.cam_plan(t["look"]["cam"], {"x": 0, "y": 0.4, "w": 0.2, "h": 0.25}, 1280, 720)
     check("a full-width cam at the top is stacked over the game", plan["stack"] and plan["bh"] == 768 and plan["seam"] == 768 and plan["sw"] == 256)
     fc = render.cam_filter(plan, "crop", 1920)

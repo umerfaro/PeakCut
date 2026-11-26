@@ -408,8 +408,15 @@ def _download_section(url: str, out_dir: Path, stem: str, start: float, end: flo
                 else:
                     ydl.download([url])
                     piece = _biggest(work, stem)
-            if probe(piece)["duration"] < end - start - 1:
+            got = probe(piece)
+            if got["duration"] < end - start - 1:
                 raise RuntimeError("The download returned only part of this range. Try making the clip again later.")
+            # While a live replay is still publishing, YouTube often only serves 360p for some stretches.
+            # Refuse that when a sharper download was asked for, so a remake can try again later.
+            if height and got["height"] < height / 2:
+                raise RuntimeError(
+                    f"YouTube only sent {got['height']}p for this part (asked for {height}p). "
+                    "Try making the clip again in a few minutes.")
             return piece.replace(out_dir / piece.name)
 
     with slot:
